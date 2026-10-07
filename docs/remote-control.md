@@ -1,158 +1,118 @@
-# Launch, stop, and choose models from the dashboard
+# Remote nodes, launch controls, and individual settings
 
-The dashboard can now control remote agent workers. Run one **node service** on each machine where your coding tools are installed. That service advertises its tool/model catalog, polls for your requests, launches workers, and reports their actual process state.
+Run one outbound-only node service per remote machine and project. Each machine advertises its own capabilities, models, modes, settings schema, protocol/tool versions, and health. Different VPSs can have completely different tools.
 
 ![Remote agent controls](assets/remote-control.png)
 
-## 1. Register a remote node
+## 1. Register the machine
 
-In your project, open **Agents & connections → Add remote node**. Give the machine a name and save its one-time node token.
+Open **Agents & connections → Add remote node**, name the machine, and save its one-time token. Node tokens are project-scoped supervisor credentials; they cannot log into the dashboard or impersonate teammates.
 
-Node identities belong to one project. A node token receives runtime instructions for that project's teammates; it cannot log into the dashboard or act as a teammate through the normal collaboration API.
-
-## 2. Prepare the remote machine
-
-The node service supports Linux and macOS. It needs Python 3.11+, Git, a project clone with an initial commit, and the headless agent commands you intend to use. Agents use the Git identity, Git credentials, and model authentication already configured on that machine.
-
-Install the AgentCommons source and environment:
+## 2. Prepare and diagnose
 
 ```bash
-git clone https://github.com/modhack2003/agentcommons.git
-cd agentcommons
+git clone https://github.com/modhack2003/agentverse.git
+cd agentverse
 uv sync --frozen
+uv run agentverse doctor
 cp examples/node.example.json /path/to/node.json
+uv run agentverse doctor --config /path/to/node.json
 ```
 
-Edit the local configuration:
+Linux/macOS supervisors need Python 3.11+. Managed coding also needs Git, an initial commit, the selected base branch, a prepared project clone, and working tool/provider/Git authentication. Connected-only inventories do not require a project clone.
+
+Edit the example instead of assuming every detected command is headless. Use absolute executable paths if the service's `PATH` differs from your terminal. A missing executable, missing optional plugin, or failed health check is advertised for that profile; healthy tools still connect. CLI health confirms executable availability, not provider login or successful task completion. API health checks configuration, not remote reachability.
 
 ```json
 {
   "repo": "/srv/projects/your-project",
   "max_workers": 4,
-  "log_dir": "~/.local/state/agentcommons/logs",
+  "log_dir": "~/.local/state/agentverse/logs",
   "profiles": [
     {
-      "id": "opencode",
-      "name": "OpenCode CLI",
-      "kind": "opencode",
+      "id": "coding-cli", "name": "My coding CLI", "kind": "opencode",
+      "mode": "managed_cli", "driver": "cli",
       "argv": ["opencode", "run", "--model", "{model}", "{prompt}"],
-      "models": [
-        {"id": "YOUR_PROVIDER/YOUR_MODEL", "name": "My coding model"},
-        {"id": "YOUR_PROVIDER/ANOTHER_MODEL", "name": "My reasoning model"}
-      ],
-      "base": "main",
-      "push": true,
-      "timeout": 1800
+      "models": [{"id": "YOUR_PROVIDER/YOUR_MODEL", "name": "My coding model"}],
+      "capabilities": ["python", "review"],
+      "limitations": ["No browser automation configured"],
+      "settings_schema": [{"key": "respond_to_help", "label": "Answer peer help", "type": "boolean", "default": true}],
+      "base": "main", "push": true, "timeout": 1800
+    },
+    {
+      "id": "editor", "name": "Cline editor", "kind": "cline", "mode": "connected",
+      "capabilities": ["frontend"], "limitations": ["Start the editor session manually"]
     }
   ]
 }
 ```
 
-Use real model identifiers that your tool supports and your provider account can access. For OpenCode, `opencode models` lists available identifiers. The example model IDs are placeholders, not preconfigured provider access.
+The tool ID can be any current/future tool; it is normalized to lowercase. Capability tags match exactly, so use consistent lowercase names. Models must be real identifiers available to the node's provider account. `models` omitted defaults to the tool's default (`id: ""`); the built-in CLI driver omits a paired `--model {model}` or `-m {model}` when that ID is empty.
 
-The executable must be installed and on the node service's `PATH`, or use its absolute path. The node checks executables and the Git clone before registering its catalog.
+`argv` is executed without a shell. `{prompt}`, `{prompt_file}`, `{model}`, and `{setting:key}` are supported. A wrapper must apply the selected model/settings and follow the [worker contract](agents.md#unattended-worker-contract). Commands, HTTP headers, adapter URLs, repository paths, and credentials are not advertised to the server. Add supported non-secret controls using typed `settings_schema`; see [adapters](adapters.md).
 
-For Cline, Omnirush, Agent Zero, or custom tools, define a profile with the matching `kind` (`cline`, `omnirush`, `agentzero`, or `custom`) and your installed headless command/wrapper:
+## 3. Connect once
 
-```json
-{
-  "id": "my-agent",
-  "name": "My agent wrapper",
-  "kind": "custom",
-  "argv": ["/srv/agents/run-agent", "{prompt_file}", "{model}"],
-  "models": [
-    {"id": "model-a", "name": "Model A"},
-    {"id": "model-b", "name": "Model B"}
-  ]
-}
+```bash
+export AGENTVERSE_NODE_TOKEN='the-one-time-node-token'
+uv run agentverse node --server https://agents.your-domain.com \
+  --config /path/to/node.json
 ```
 
-Profiles use the existing [worker output contract](agents.md#unattended-worker-contract). The selected model is supplied as the `{model}` argument placeholder, the `AGENTCOMMONS_MODEL` environment variable, and `selected_model` in project context. Your wrapper must apply that selection to its model API or agent runtime.
+The node needs outbound HTTPS, not inbound SSH or an agent-machine listener. Inventory refreshes about every 30 seconds. Valid file edits reload; invalid/incomplete edits preserve the last working inventory and expose a diagnostic. Changing the repository waits for workers to stop. Restart to apply a changed log directory; preserve API journals during recovery.
 
-### Give managed CLI sessions their own MCP identity
+## 4. Configure teammates
 
-The worker supplies `AGENTCOMMONS_SERVER` and its own run-scoped `AGENTCOMMONS_AGENT_TOKEN` to the coding command. Configure tool integrations to read these values per process, so teammates sharing a clone do not reuse one hard-coded MCP identity.
+Invite a teammate with a tool ID matching its profile (or `custom`), then choose **Configure → node → runtime → model → settings → Save runtime**. Capabilities from the runtime populate an otherwise-empty identity. **Edit profile** manages each teammate's role, strengths, and limitations with conflict detection.
 
-For OpenCode, its [environment variable substitution](https://opencode.ai/docs/config/#env-vars) supports this remote MCP configuration on the node:
+- **Managed CLI:** Launch invokes a headless command. Stop terminates its worker/child groups and reports completion before releasing work.
+- **Managed API:** choose the `http` driver and configure a [jobs-protocol bridge](adapters.md#jobs-protocol-version-1). A plain LLM API is not sufficient. Use [node.api.example.json](../examples/node.api.example.json).
+- **Connected session:** launch/stop controls are replaced with connection guidance. Start the editor/app yourself, choose its model there, and attach MCP/HTTP. Node presence is not proof that the editor session is active.
+
+The card shows process state, selected model, problems, and limitations. **Report problem** tracks a teammate's tool/authentication/project issue. **Ask for help** routes a capability request to a suggested peer; another matching peer can claim it. Idle workers answer help in detached, read-only worktrees unless `respond_to_help` is false.
+
+TUI: use the Team tab and `c` (runtime), `e` (profile), `l` (launch), `s` (stop), `o` (register node), `h` (help). Enter inspects the profile/runtime; Health & help shows tool diagnostics and peer questions. Settings are JSON in the terminal and typed fields on the web.
+
+## Per-process identity
+
+Managed workers receive a run-scoped agent token, model, settings, and server in `AGENTVERSE_*` and legacy `AGENTCOMMONS_*` variables. Bind the tool's MCP/SDK configuration to those environment variables, not a hard-coded shared token. Administrator/node tokens are removed from child environments.
+
+OpenCode supports this remote MCP configuration:
 
 ```json
 {
   "mcp": {
-    "agentcommons": {
-      "type": "remote",
-      "url": "{env:AGENTCOMMONS_SERVER}/mcp/",
-      "headers": {"Authorization": "Bearer {env:AGENTCOMMONS_AGENT_TOKEN}"},
-      "enabled": true
+    "agentverse": {
+      "type": "remote", "url": "{env:AGENTVERSE_SERVER}/mcp/",
+      "headers": {"Authorization": "Bearer {env:AGENTVERSE_AGENT_TOKEN}"}, "enabled": true
     }
   }
 }
 ```
 
-For other runtimes, bind MCP headers or SDK authentication to the same per-process environment variables in your wrapper. The worker handles task claims/submission; the CLI can use its own identity for live conversation and shared memory.
+The command can use chat/memory/help through its own identity. The worker owns claims, plan creation, submission, and reviews. Use at least two distinct teammates for unattended coding and independent review. The saved connection token is fenced while its identity has an active managed run; other sessions need separate identities.
 
-`argv` is executed without a shell. Provider keys and executable paths stay on the remote node. The server receives the profile name, kind, and model options, not executable commands or provider credentials. A model option with `id: ""` can represent the tool's default when your command/wrapper supports that behavior.
+## Stop, failure, and recovery
 
-## 3. Start the node service once
+- State normally moves `queued → starting → running → stopping → stopped`. A failed command is reported explicitly and is not silently restarted.
+- Configuration changes are blocked while work is active. Launch is idempotent for an active generation. Stale reports cannot change a newer run.
+- A node goes offline and managed credentials expire after its **45-second lease**. The service stops local workers when it cannot renew the lease.
+- Only one service owns a node token. After unclean disconnection, takeover waits **90 seconds**; a normal clean shutdown permits immediate reconnect.
+- CLI cancellation releases claims after process termination. API cancellation may become **`unconfirmed`**: tasks/reviews/help remain held; launch, reconfiguration, and manual claim release are blocked until the jobs bridge confirms the previous job ended.
+- Keep the same node `log_dir` and durable API journals on restart. A replacement on another machine without those journals cannot safely clear an unconfirmed API run. Restore the journal/connector and establish terminal acknowledgement first.
+- Interrupted/failed Git worktrees remain for inspection. Diagnose before relaunching. Logs (`run_….log`) and API journals (`run_….json`) are node-local, private files. Avoid deleting journals for unresolved API jobs.
+- An unsupported protocol fails explicitly; a broken optional profile does not shut down other tools.
 
-```bash
-export AGENTCOMMONS_NODE_TOKEN='the-one-time-node-token'
-uv run agentcommons node \
-  --server https://commons.your-domain.com \
-  --config /path/to/node.json
-```
+## Linux service
 
-The node makes outbound HTTPS requests, so it does not need an inbound listener, SSH access from the server, or a port opened on the agent machine. Its project clone and configured tool/model catalog appear on the dashboard as soon as it connects.
-
-## 4. Configure and launch teammates
-
-1. Invite a teammate, choosing its tool in **Connect agent**.
-2. Click **Configure** on its card.
-3. Select the **remote node**, **agent runtime**, and **model**.
-4. Save the runtime, then click **Launch**.
-
-The card moves through `queued → starting → running` as the node starts the worker. It shows the selected model, node, and reported worker PID. A configured online node is required to launch, and the project must be active.
-
-The terminal UI's **Team** tab also shows managed runtime state and the selected model. Launch, stop, and model configuration are available in the web dashboard and through the authenticated API.
-
-Configure at least two independent teammates for unattended coding plus peer review. Multiple workers on a node share its clone and create separate worktrees; `max_workers` limits concurrent managed workers. Each worker gets a run-scoped credential for its own teammate, rather than your administrator or node token.
-
-## Stop and change models
-
-Click **Stop** to request cancellation. The card stays `stopping` until the node confirms the process has exited. The worker interrupts its coding CLI, terminates its child process group, and releases its current task/review. Stopped or failed workers can then be reconfigured and relaunched with another model. Their Git worktrees and branches remain available for inspection when a task was interrupted.
-
-Repeated **Launch** requests for an active run are idempotent. Configuration cannot be changed while a run is queued, starting, running, or stopping. A late status report from an older run cannot affect its replacement. A failed process is reported as failed; the node does not silently restart it in a loop.
-
-## Connection recovery
-
-- A disconnected node is shown as offline after its 45-second connection lease expires.
-- Run credentials also expire with that lease. The supervisor stops workers when it cannot renew its connection, and a worker cancels its coding CLI when its credential is rejected.
-- Start/stop requests are stored durably on the server. A stop during disconnection remains pending until the node reconnects and confirms termination.
-- A node token has one active service session. Starting a second service with the same token is rejected while the first connection is fresh. After an unclean exit, a replacement session may take over after 90 seconds; old runtime state is retired before new launches.
-- A normal node shutdown stops its workers and disconnects its session, permitting immediate reconnection.
-
-Logs are local to the node, one `run_….log` per run under `log_dir`, with private file permissions. The dashboard reports startup errors, capacity errors, process exit codes, and the corresponding log filename. Remove old log files as part of your node's normal maintenance.
-
-## Run the node as a Linux service
-
-An example unit is provided at [examples/agentcommons-node.service](../examples/agentcommons-node.service). Adjust its user and paths for your installation. Use a prepared service account that can access the project clone, agent tools, and provider/Git credentials.
-
-Its environment file should contain:
+Use [agentverse-node.service](../examples/agentverse-node.service), adjusting user/paths. Prepare that user's tool/provider/Git access. Example private environment file:
 
 ```dotenv
-AGENTCOMMONS_SERVER=https://commons.your-domain.com
-AGENTCOMMONS_NODE_TOKEN=YOUR_NODE_TOKEN
-# Set your provider variables here if your runtime uses environment authentication.
+AGENTVERSE_SERVER=https://agents.your-domain.com
+AGENTVERSE_NODE_TOKEN=YOUR_NODE_TOKEN
+# Add the provider/adapter variables required by your chosen tools.
 ```
 
-Store this file with permissions appropriate for credentials. Then install the adjusted unit and start it with `systemctl enable --now agentcommons-node`.
+Install the adjusted unit and run `systemctl enable --now agentverse-node`. Existing `agentcommons-node.service` installations remain compatible; do not run old and new units for the same node token simultaneously.
 
-## Upgrade an existing server
-
-Pull the repository update and rebuild your Docker deployment:
-
-```bash
-git pull
-docker compose -f compose.yml -f compose.production.yml up -d --build
-```
-
-For the loopback-only deployment, use `docker compose up -d --build`. Startup adds the node/runtime tables and the agent revocation column without replacing existing projects, agents, messages, memory, or tasks.
+Upgrading an existing deployment? Follow [migration](migration.md), retaining database, Compose volume identity, credentials, and recovery journals.

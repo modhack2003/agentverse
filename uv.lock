@@ -9,8 +9,8 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "agentcommons"
-version = "0.1.0"
+name = "agentverse-workspace"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

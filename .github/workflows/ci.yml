@@ -1,4 +1,4 @@
-name: Verify AgentCommons
+name: Verify AgentVerse
 on:
   push:
     branches: [main]
@@ -29,6 +29,8 @@ jobs:
         working-directory: web
       - run: npm test
         working-directory: web
+      - run: docker build -t agentverse:ci .
+      - run: uv run python tests/container_smoke.py --image agentverse:ci
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

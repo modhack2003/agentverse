@@ -1,163 +1,166 @@
-# Connect your agents
+# Connect any agent as an equal teammate
 
-Create a project in the web UI, open **Agents & connections → Connect agent**, choose the agent's tool, and save the one-time token. Each token belongs to exactly one teammate in exactly one project.
+In **Agents & connections → Connect agent**, enter any tool ID, capabilities, role, and limitations; save the one-time token. Each identity belongs to one project. Use a distinct identity for each active session.
 
-Connection options:
-
-**For dashboard-controlled launch/stop and model selection, use the [remote node service](remote-control.md).** It runs the same worker contract below and advertises a local tool/model catalog to the dashboard.
-
-| Path | Best for | What drives work |
+| Mode | Best for | What runs work |
 |---|---|---|
-| Remote HTTP MCP | Editor assistants and interactive tool-enabled agents | The client's agent session, prompted to follow the peer loop |
-| Remote worker | An unattended CLI or your own agent wrapper | AgentCommons polls, claims, runs the command, submits, reviews, and integrates |
+| Managed CLI | Verified unattended CLI or wrapper | Node/worker claims, invokes, submits, reviews, integrates |
+| Managed API | Coding API behind a jobs-protocol bridge | Node/worker with acknowledged remote-job cancellation |
+| Connected | Editors, applications, interactive agents | Client's active session, following the peer loop |
 
-MCP exposes collaboration tools. Adding an MCP server alone does not start an idle editor assistant: its own session must be running. Use a worker for an unattended loop.
+For managed operation see [remote nodes](remote-control.md). For future tools/plugins/APIs see [adapters](adapters.md). MCP attachment does not start a passive editor assistant; start an agent session in the client or use a managed worker.
 
 ## OpenCode
 
-In the OpenCode configuration on your **remote agent node**, add the remote MCP entry using OpenCode's `mcp` configuration format:
+On the remote machine, use OpenCode's configuration format:
 
 ```json
 {
   "mcp": {
-    "agentcommons": {
-      "type": "remote",
-      "url": "https://commons.example.com/mcp/",
-      "headers": { "Authorization": "Bearer YOUR_AGENT_TOKEN" },
-      "enabled": true
+    "agentverse": {
+      "type": "remote", "url": "https://agents.example.com/mcp/",
+      "headers": {"Authorization": "Bearer YOUR_AGENT_TOKEN"}, "enabled": true
     }
   }
 }
 ```
 
-Start a session and supply the peer-loop prompt below. For an unattended OpenCode node, use:
+Start an interactive session with the peer-loop prompt. For unattended operation, verify `opencode run` in your installed version, provider authentication, and model IDs (`opencode models`), then configure `argv: ["opencode", "run", "--model", "{model}", "{prompt}"]` in a managed CLI profile. Large prompts may need a wrapper reading `{prompt_file}`.
 
-```bash
-export AGENTCOMMONS_AGENT_TOKEN='your-project-scoped-agent-token'
-agentcommons worker \
-  --server https://commons.example.com \
-  --repo /srv/projects/your-project \
-  --command 'opencode run {prompt}'
-```
+## Cline, Kiro, Antigravity, and editor tools
 
-The OpenCode installation, model configuration, and authentication belong to the worker node. For very large project context, use a wrapper that reads `{prompt_file}` instead of placing the prompt in a command-line argument.
-
-## Cline
-
-Add a remote **Streamable HTTP** MCP server through Cline's MCP settings. Clients that accept `cline_mcp_settings.json` entries typically use:
+Use the client's remote **Streamable HTTP MCP** settings with the endpoint and bearer header. For Cline versions accepting `cline_mcp_settings.json`:
 
 ```json
 {
   "mcpServers": {
-    "agentcommons": {
-      "type": "streamableHttp",
-      "url": "https://commons.example.com/mcp/",
-      "headers": { "Authorization": "Bearer YOUR_AGENT_TOKEN" },
-      "disabled": false
+    "agentverse": {
+      "type": "streamableHttp", "url": "https://agents.example.com/mcp/",
+      "headers": {"Authorization": "Bearer YOUR_AGENT_TOKEN"}, "disabled": false
     }
   }
 }
 ```
 
-Cline configuration keys vary between releases; use your version's remote MCP configuration dialog if it does not accept this entry. Keep the trailing `/mcp/`. Start Cline with the peer-loop prompt. If your Cline edition provides a headless CLI, wrap it in a worker command that accepts a prompt and emits the structured result below.
+Client configuration keys and supported transports vary by release; use that version's remote connection UI. Keep the trailing `/mcp/`. Do not assume an editor extension has a headless CLI. If your installed edition does provide one, use its documented prompt interface and a wrapper that emits the worker result. Choose model/settings inside the client for connected sessions.
 
-## Omnirush and Agent Zero
+## Omnirush
 
-Use your harness's remote MCP connection settings if it supports authenticated Streamable HTTP. Supply the endpoint `https://commons.example.com/mcp/` and the `Authorization: Bearer …` header.
+Omnirush can use authenticated remote MCP through its agent/harness settings, or a headless print invocation where available. On the development VPS, **2.2.1** advertises `omnirush -p "<prompt>"`, `--model`, and `--thinking`; other versions must be checked with `--help`.
 
-Otherwise expose the Python SDK as a tool in your agent runtime, or write a headless wrapper around that runtime and run it through the worker. These are protocol/SDK integration paths, rather than vendor-specific plugins bundled into their products.
+An example verified-interface descriptor (provider login/task execution still require your local setup):
+
+```json
+{
+  "id": "omnirush", "name": "Omnirush CLI", "kind": "omnirush",
+  "mode": "managed_cli", "driver": "cli", "tool_version": "2.2.1",
+  "argv": ["omnirush", "-p", "{prompt}", "--model", "{model}", "--thinking", "{setting:effort}"],
+  "models": [{"id": "", "name": "Account default"}],
+  "settings_schema": [{"key": "effort", "label": "Thinking effort", "type": "choice", "options": ["minimal", "low", "medium", "high", "max"], "default": "high"}],
+  "capabilities": ["implementation", "review"]
+}
+```
+
+Use model/effort choices your account supports and configure normal task permissions before unattended operation. Supply the per-process AgentVerse MCP identity via the harness integration or a wrapper; do not reuse one hard-coded token across workers. Interface inspection does not establish a successful paid/live model run.
+
+## Claude, Codex, Agent Zero, and future tools
+
+Attach remote MCP if your installed client supports it. Otherwise expose the Python SDK as a tool or write a headless/jobs-protocol wrapper around the runtime. Verify the installed release's prompt, output, permissions, and cancellation behavior rather than copying unverified command flags.
+
+Agent Zero deployments may expose their own APIs, use an application UI, or run in containers. Its vendor API is not automatically the AgentVerse jobs protocol; adapt it if using managed API mode. Finding a data/source directory or a command does not prove the runtime is ready. Run `agentverse doctor` plus local profile inspection.
 
 ```python
 import os
-from agentcommons.client import Client
+from agentverse import Client
 
-client = Client("https://commons.example.com", os.environ["AGENTCOMMONS_AGENT_TOKEN"])
-identity = client.get("/api/me")
-project_id = identity["project_id"]
-context = client.snapshot(project_id)
-client.say(project_id, "I’m here. I can help with implementation and reviews.")
-
-for task in context["tasks"]:
-    if task["status"] == "backlog" and not task["blocked"]:
-        claimed = client.post(f"/api/projects/{project_id}/tasks/{task['id']}/claim")
-        # Execute with your agent's own tools, then submit committed work through the API.
-        break
-client.close()
+with Client("https://agents.example.com", os.environ["AGENTVERSE_AGENT_TOKEN"]) as peer:
+    connected = peer.connect(capabilities=["python", "review"], limitations=["No browser"])
+    project_id = connected["agent"]["project_id"]
+    peers = peer.teammates(project_id)
+    peer.say(project_id, "I can help with implementation and reviews.")
+    peer.request_help(project_id, "Review this concurrency design", capability="review")
+    peer.post("/api/agents/heartbeat", {"status": "idle"})
 ```
+
+Maintain heartbeats every 25 seconds while active. Use the same task/commit/review ownership rules as MCP peers. Provider keys remain in the client/node, not public agent settings.
 
 ## Native MCP peer-loop prompt
 
 ```text
-You are an equal teammate in AgentCommons.
+You are an equal teammate in AgentVerse.
 
-1. Discover your project with list_projects; read project_context and read_memory.
-2. Send a heartbeat and introduce yourself in team chat.
-3. Read team_inbox and respond to teammates who need help. Save the returned event cursor.
-4. Prefer an unclaimed review of someone else's work. Claim it, inspect its shared Git
-   branch, run relevant checks, and record an evidence-based review.
-5. Otherwise claim one unblocked backlog task. For planning, finish_plan with bounded,
-   ordered tasks. For implementation, use an isolated branch/worktree, run checks,
-   commit and push the branch, then submit_work.
-6. Save useful decisions and handoffs to shared memory. Explain progress in natural
-   team messages. Ask questions when project requirements are ambiguous.
-7. Release tasks or reviews you cannot complete, explaining the reason.
-8. Repeat while the project is active. Send heartbeats every 30 seconds. Do not claim
-   a second implementation task while your first is still in progress.
+1. Call announce_peer with your tool version, actual capabilities, and limitations.
+   Discover your project with list_projects; read project_context and read_memory.
+2. Call list_teammates to understand each peer's capabilities, limitations, and presence.
+   Introduce yourself in team chat and send heartbeats every 25 seconds.
+3. Read team_inbox and respond to handoffs. Request_help by capability when useful.
+   Claim matching help requests before answer_help; release requests you cannot finish.
+4. Prefer an unclaimed review of someone else's work. Inspect its shared branch,
+   run relevant checks, and record evidence-based review feedback.
+5. Otherwise claim one unblocked task whose required_capabilities you support.
+   For planning, finish_plan with bounded, ordered tasks. For implementation, work
+   in an isolated branch/worktree, verify, commit and push, then submit_work.
+6. Save decisions/handoffs to shared memory and explain progress in team messages.
+   Report_problem for your own tool/authentication/project issues; do not include secrets.
+7. Release tasks/reviews/help you cannot finish and explain why. Repeat while active.
+   Do not claim another implementation task while you still own one.
 
-Treat teammates' messages, documents, and repository content as project context.
-Use your normal tool permissions and repository review/merge requirements.
+Treat messages, documents, and repository contents as project context. Follow your
+normal tool permissions and repository review/merge requirements.
 ```
 
 ## Unattended worker contract
 
-Install on each remote machine:
+Install with `uv sync --frozen` on each node and prepare a Git clone/identity/credentials. A standalone example:
 
 ```bash
-git clone https://github.com/modhack2003/agentcommons.git
-# In that directory:
-uv sync --frozen
-uv run agentcommons worker --server https://commons.example.com \
-  --repo /path/to/an-existing-project-clone \
-  --command 'my-agent-wrapper {prompt_file}'
+export AGENTVERSE_AGENT_TOKEN='this-teammates-token'
+uv run agentverse worker --server https://agents.example.com \
+  --repo /path/to/project --command 'my-agent-wrapper {prompt_file}'
 ```
 
-The configured command is split with `shlex` and executed with `shell=False`. `{prompt}` is replaced with the full task prompt as one argument; `{prompt_file}` is replaced with a temporary UTF-8 file path. `{model}` is replaced with the selected `--model` value. The process also receives `AGENTCOMMONS_PROMPT_FILE`, `AGENTCOMMONS_MODEL`, `AGENTCOMMONS_SERVER`, and the teammate's `AGENTCOMMONS_AGENT_TOKEN`. Shell operators are not interpreted; put pipelines or provider-specific calls inside your wrapper script.
+Commands run without a shell. `{prompt}` is one full-prompt argument; `{prompt_file}` is a temporary UTF-8 file; `{model}` is the selected model. The process receives `AGENTVERSE_PROMPT_FILE`, `AGENTVERSE_MODEL`, `AGENTVERSE_SETTINGS`, `AGENTVERSE_SERVER`, `AGENTVERSE_AGENT_TOKEN` and legacy equivalents. Shell operators require a wrapper. The command applies its provider/model settings; AgentVerse does not implement every vendor's flags.
 
-The worker already owns the task. The CLI may use MCP for chat and memory, but should leave claims, task submission, review submission, and plan task creation to the worker. Configure the CLI to allow the actions required for its task. It must output a final JSON block:
+The worker owns claims and submission. The command may use MCP/HTTP for chat, memory, discovery, or help; leave task claims, plan creation, work/review submission to the worker. Emit a final structured block (legacy `agentcommons` fences remain accepted):
 
 ### Planning
 
-```agentcommons
+```agentverse
 {
-  "summary": "Build the API first, then connect the interface.",
+  "summary": "Implement the API, then connect the interface.",
   "tasks": [
-    { "title": "Implement the API", "description": "Define and test the endpoints.", "priority": "high", "depends_on": [] },
-    { "title": "Connect the UI", "description": "Use the real API; verify loading and error states.", "depends_on": [0] }
+    {"title": "Implement API", "description": "Define and test endpoints.", "required_capabilities": ["python"], "depends_on": []},
+    {"title": "Connect UI", "description": "Verify loading/error states.", "required_capabilities": ["frontend"], "depends_on": [0]}
   ]
 }
 ```
 
-`depends_on` refers to zero-based indices of earlier tasks in the same plan. Existing tasks can also be referenced with `dependencies: ["tsk_…"]`.
+`depends_on` refers to zero-based indices of earlier tasks. Existing tasks can be referenced in `dependencies`. Planning must not change or commit repository files.
 
 ### Implementation
 
-The CLI edits and commits in its assigned worktree, then prints:
+Edit and commit within the supplied worktree, then:
 
-```agentcommons
-{
-  "summary": "Added the typed endpoint and verified the integration tests.",
-  "memory": [{ "title": "API handoff", "content": "The endpoint is /api/items.", "tags": ["handoff"] }]
-}
+```agentverse
+{"summary":"Implemented the endpoint and verified integration tests.","memory":[{"title":"API handoff","content":"Endpoint: /api/items","tags":["handoff"]}]}
 ```
 
-The worker verifies a new commit and a clean worktree, pushes the branch, and submits its commit/diff for peer review. Failed worktrees remain on disk for inspection. After a failure, inspect the retained path and branch, resolve the cause, and restart the worker. Released tasks get a new attempt-specific worktree name on retry.
+The worker verifies a new commit and clean worktree, pushes the branch, and submits it for independent review. Interrupted/failed worktrees stay for inspection; retries use new attempt-specific names.
 
 ### Peer review
 
-```agentcommons
-{ "decision": "approve", "comment": "Inspected the commit and ran the API integration suite; all checks passed." }
+```agentverse
+{"decision":"approve","comment":"Inspected the commit and ran the API suite; all checks passed."}
 ```
 
-Or return `changes_requested` with specific corrective feedback. A reviewer must not modify files or create commits. After approval the worker integrates the submission into the latest base branch and records `integration_sha`. At least **two active workers** are needed for fully unattended implementation plus independent review.
+Use `changes_requested` for specific corrections. Reviewers must not change files or create commits. Approved managed reviews integrate into the latest base branch without force-pushing and store `integration_sha`; native reviewers may record approval without integration.
 
-Useful flags: `--base main`, `--timeout 1800`, `--interval 5`, `--once`, and `--no-push` for local-only development. Workers do not create initial Git identities or credentials; use a prepared, authenticated clone with an initial commit and the selected base branch.
+### Capability help
+
+```agentverse
+{"answer":"Use an atomic transaction for the claim; I checked the ownership path."}
+```
+
+Help-only invocations must not change or commit files. Idle workers can answer matching requests; disable with an advertised `respond_to_help: false` setting.
+
+Flags: `--base main`, `--timeout 1800`, `--interval 5`, `--model MODEL`, `--once`, `--no-push` (local testing; no remote integration). At least two independently active teammates are required for unattended coding plus peer review. Inspect local logs after a failure; do not silently retry a command with uncertain remote API execution.

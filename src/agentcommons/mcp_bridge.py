@@ -1,28 +1,72 @@
 """The same permissions and transactions power HTTP and MCP."""
 
-import os
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .models import MemoryWrite, MessageCreate, PlanFinish, ReviewCreate, TaskCreate, WorkSubmit
+from .models import AgentAnnounce, HelpCreate, HelpAnswer, IssueCreate
+from .config import PRODUCT, setting
 
 
 def create_mcp(store):
-    domain = os.getenv("AGENTCOMMONS_DOMAIN", "").strip()
-    extra_hosts = [host.strip() for host in os.getenv("AGENTCOMMONS_MCP_HOSTS", "").split(",") if host.strip()]
+    domain = setting("DOMAIN").strip()
+    extra_hosts = [host.strip() for host in setting("MCP_HOSTS").split(",") if host.strip()]
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=["127.0.0.1", "127.0.0.1:*", "localhost", "localhost:*", "[::1]", "[::1]:*",
                        *extra_hosts, *([domain, f"{domain}:*"] if domain else [])],
         allowed_origins=["http://127.0.0.1:*", "http://localhost:*", *([f"https://{domain}"] if domain else [])],
     )
-    mcp = FastMCP("AgentCommons", stateless_http=True, json_response=True, streamable_http_path="/",
+    mcp = FastMCP(PRODUCT, stateless_http=True, json_response=True, streamable_http_path="/",
                   transport_security=security)
 
     def who(ctx: Context):
         request = ctx.request_context.request
         return store.authenticate(request.headers.get("authorization") if request else None)
+
+    @mcp.tool()
+    def announce_peer(ctx: Context, tool_version: str = "", capabilities: list[str] | None = None,
+                      limitations: list[str] | None = None) -> dict:
+        """Introduce this session and discover its teammates, capabilities and connection contract."""
+        return store.team.announce(who(ctx), AgentAnnounce(connection="mcp", tool_version=tool_version,
+            capabilities=capabilities or [], limitations=limitations or []))
+
+    @mcp.tool()
+    def list_teammates(project_id: str, ctx: Context, capability: str = "") -> list[dict]:
+        """Find peers by capability. Includes individual descriptions, limitations, presence and settings."""
+        return store.team.peers(who(ctx), project_id, capability)
+
+    @mcp.tool()
+    def request_help(project_id: str, question: str, ctx: Context, capability: str = "", task_id: str | None = None) -> dict:
+        """Ask for explicit team help. The registry suggests a capable peer and keeps the request durable."""
+        return store.team.ask(who(ctx), project_id, HelpCreate(question=question, capability=capability, task_id=task_id))
+
+    @mcp.tool()
+    def claim_help(project_id: str, help_id: str, ctx: Context) -> dict:
+        """Claim another teammate's help request that matches your capabilities."""
+        return store.team.claim_help(who(ctx), project_id, help_id)
+
+    @mcp.tool()
+    def answer_help(project_id: str, help_id: str, answer: str, ctx: Context) -> dict:
+        """Answer a claimed help request and share the handoff with the team."""
+        return store.team.answer(who(ctx), project_id, help_id, HelpAnswer(answer=answer))
+
+    @mcp.tool()
+    def release_help(project_id: str, help_id: str, ctx: Context) -> dict:
+        """Release a claimed help request you cannot complete, after stopping any active execution."""
+        return store.team.release_help(who(ctx), project_id, help_id)
+
+    @mcp.tool()
+    def resolve_problem(project_id: str, issue_id: str, ctx: Context) -> dict:
+        """Mark a previously reported problem resolved for your own identity."""
+        return store.team.resolve(who(ctx), project_id, issue_id)
+
+    @mcp.tool()
+    def report_problem(project_id: str, title: str, ctx: Context, detail: str = "", severity: str = "warning") -> dict:
+        """Report this peer's blocked capability, missing access or tool malfunction for operator diagnosis."""
+        principal = who(ctx)
+        return store.team.issue(principal, project_id, principal.agent_id, IssueCreate(title=title, detail=detail, severity=severity))
 
     @mcp.tool()
     def list_projects(ctx: Context) -> list[dict]:

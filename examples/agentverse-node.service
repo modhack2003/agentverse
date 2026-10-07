@@ -1,0 +1,18 @@
+[Unit]
+Description=AgentVerse remote node supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agentverse
+WorkingDirectory=/opt/agentverse
+EnvironmentFile=/etc/agentverse/node.env
+ExecStart=/opt/agentverse/.venv/bin/agentverse node --config /etc/agentverse/node.json
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,129 @@
+import { expect, test } from '@playwright/test'
+
+const token = 'browser-test-only-token-not-a-secret'
+const headers = { Authorization: `Bearer ${token}` }
+const root = 'http://127.0.0.1:8000/api'
+
+test('seven themes persist, motion respects accessibility, and dialogs keep keyboard focus', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/')
+  await expect(page.locator('.brand')).toHaveText('AgentVerse')
+  await expect(page.locator('html')).toHaveAttribute('data-motion', 'off')
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  for (const [name, id] of [['Aurora', 'aurora'], ['Cosmic', 'cosmic'], ['Ember', 'ember'], ['Daylight', 'daylight'], ['Atoms', 'atoms'], ['Deep Sea', 'deep-sea'], ['Deep Galaxy', 'deep-galaxy']]) {
+    const button = dialog.getByRole('button', { name: new RegExp(`^${name}`) })
+    await button.click()
+    await expect(button).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', id)
+    expect(await page.locator('.ambient-glow').first().evaluate(el => getComputedStyle(el).animationName)).toBe('none')
+  }
+  await dialog.getByRole('button', { name: 'Off', exact: true }).click()
+  await dialog.getByRole('button', { name: 'Done', exact: true }).focus()
+  await page.keyboard.press('Tab')
+  await expect(dialog.getByRole('button', { name: 'Close dialog' })).toBeFocused()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('button', { name: 'Appearance', exact: true })).toBeFocused()
+  await page.reload()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'deep-galaxy')
+  await expect(page.locator('html')).toHaveAttribute('data-motion', 'off')
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: /^Daylight/ })).toBeVisible()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  expect(errors).toEqual([])
+})
+
+test('one-time teammate token survives a failed post-save refresh', async ({ page, request }) => {
+  await request.post(`${root}/projects`, { headers, data: { name: 'Refresh failure lab', goal: 'Keep invitation tokens visible.', auto_plan: false } })
+  await page.goto('/')
+  await page.getByLabel('Workspace access token').fill(token)
+  await page.getByRole('button', { name: 'Enter your workspace' }).click()
+  await page.getByRole('button', { name: 'Connect agent', exact: true }).click()
+  await page.getByLabel('Teammate name').fill('Refresh-proof peer')
+  await page.getByLabel('Agent tool').fill('future-wrapper')
+  await page.route('**/api/projects/*/snapshot', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"Fixture refresh failure"}' }))
+  await page.getByRole('button', { name: 'Create connection' }).click()
+  await expect(page.getByRole('heading', { name: 'Refresh-proof peer is ready to connect.' })).toBeVisible()
+  await expect(page.locator('.copy-box code')).toContainText('ac_')
+})
+
+test('blocked browser storage does not break login or themes', async ({ page }) => {
+  await page.addInitScript(() => { Storage.prototype.setItem = () => { throw new Error('Storage disabled') }; Storage.prototype.getItem = () => { throw new Error('Storage disabled') } })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+  await page.getByRole('button', { name: /^Daylight/ }).click()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  await page.getByLabel('Workspace access token').fill(token)
+  await page.getByRole('button', { name: 'Enter your workspace' }).click()
+  await expect(page.getByRole('button', { name: 'Agents & connections', exact: true })).toBeVisible()
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'daylight')
+})
+
+test('future tools, typed settings, external modes, profiles, issues, and capability help', async ({ page, request }) => {
+  const p = await request.post(`${root}/projects`, { headers, data: { name: 'Future tools lab', goal: 'Coordinate arbitrary tools.', auto_plan: false } }).then(r => r.json())
+  const peer = await request.post(`${root}/projects/${p.id}/agents`, { headers, data: { name: 'Future peer', kind: 'future-tool' } }).then(r => r.json())
+  const node = await request.post(`${root}/projects/${p.id}/nodes`, { headers, data: { name: 'Mixed tools VPS' } }).then(r => r.json())
+  const nh = { Authorization: `Bearer ${node.token}` }
+  await request.post(`${root}/nodes/me/register`, { headers: nh, data: { session_id: 'd'.repeat(32), profiles: [
+    { id: 'future-cli', name: 'Future tool CLI', kind: 'future-tool', settings_schema: [
+      { key: 'effort', label: 'Reasoning effort', type: 'choice', default: 'low', options: ['low', 'high'] },
+      { key: 'budget', label: 'Iteration budget', type: 'number', default: 3, minimum: 1, maximum: 5 },
+      { key: 'respond_to_help', label: 'Respond to teammates', type: 'boolean', default: true },
+    ] },
+    { id: 'future-editor', name: 'Future editor', kind: 'future-tool', mode: 'connected' },
+    { id: 'missing', name: 'Missing optional tool', kind: 'other', availability: 'unavailable', diagnostic: 'Executable not installed; other profiles remain available.' },
+  ] } })
+  await page.goto('/')
+  await page.getByLabel('Workspace access token').fill(token)
+  await page.getByRole('button', { name: 'Enter your workspace' }).click()
+  await page.getByRole('button', { name: 'Agents & connections', exact: true }).click()
+  await page.getByText('Tool health & connection modes', { exact: true }).click()
+  await expect(page.getByText('Executable not installed; other profiles remain available.')).toBeVisible()
+  await page.getByRole('button', { name: 'Configure Future peer', exact: true }).click()
+  await page.getByLabel('Reasoning effort').selectOption('high')
+  await page.getByLabel('Iteration budget').fill('5')
+  await page.getByLabel('Respond to teammates').uncheck()
+  await page.getByRole('button', { name: 'Save runtime' }).click()
+  let snap = await request.get(`${root}/projects/${p.id}/snapshot`, { headers }).then(r => r.json())
+  expect(snap.agents[0].runtime.settings).toEqual({ effort: 'high', budget: 5, respond_to_help: false })
+  await page.getByRole('button', { name: 'Profile Future peer', exact: true }).click()
+  await page.getByLabel('Strengths').fill('frontend, review')
+  await page.getByLabel('Limitations').fill('No shell in editor mode')
+  await page.getByRole('button', { name: 'Save profile' }).click()
+  const card = page.getByRole('region', { name: 'Future peer agent' })
+  await expect(card).toContainText('No shell in editor mode')
+  await page.getByRole('button', { name: 'Report problem for Future peer' }).click()
+  await page.getByLabel('Problem', { exact: true }).fill('Reauthentication needed')
+  await page.getByLabel('Details', { exact: true }).fill('Update login on the remote machine.')
+  await page.getByRole('dialog').getByRole('button', { name: 'Report problem', exact: true }).click()
+  await expect(page.locator('.coordination-item').getByText('Reauthentication needed')).toBeVisible()
+  await page.getByRole('button', { name: 'Mark resolved' }).click()
+  await expect(page.getByText('Reauthentication needed', { exact: true })).not.toBeVisible()
+  await page.getByRole('button', { name: 'Ask for help' }).click()
+  await page.getByLabel('Capability needed').fill('review')
+  await page.getByLabel('Question', { exact: true }).fill('Please review the interface contract.')
+  await page.getByRole('button', { name: 'Send help request' }).click()
+  await expect(page.getByText('Please review the interface contract.', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Configure Future peer', exact: true }).click()
+  await page.getByLabel('Agent runtime', { exact: true }).selectOption('future-editor')
+  await expect(page.getByText('Start this tool in its own client and attach MCP or HTTP.', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Save runtime' }).click()
+  await expect(card.getByRole('button', { name: 'Launch Future peer' })).toHaveCount(0)
+  await card.getByRole('button', { name: 'Connect', exact: true }).click()
+  await page.getByRole('button', { name: 'Generate replacement token' }).click()
+  await expect(page.locator('.copy-box code')).toContainText('ac_')
+  await expect(page.getByText('Introduce the session to its teammates')).toBeVisible()
+  await page.getByRole('button', { name: 'I saved the token' }).click()
+  snap = await request.get(`${root}/projects/${p.id}/snapshot`, { headers }).then(r => r.json())
+  expect(snap.help_requests[0].recipient_id).toBe(peer.agent.id)
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click()
+  await page.getByRole('button', { name: /^Daylight/ }).click()
+  await page.getByRole('button', { name: 'Off', exact: true }).click()
+  await page.getByRole('button', { name: 'Done', exact: true }).click()
+  if (process.env.UPDATE_SCREENSHOTS) await page.screenshot({ path: '../docs/assets/daylight.png', fullPage: true })
+  await page.setViewportSize({ width: 390, height: 844 })
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})

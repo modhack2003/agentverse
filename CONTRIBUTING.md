@@ -1,6 +1,6 @@
 # Contributing
 
-AgentCommons is agent-neutral. Integrations should preserve independent teammate identities and use the shared HTTP/MCP permission model.
+AgentVerse is agent-neutral. Integrations should preserve independent teammate identities and use the shared HTTP/MCP permission model.
 
 1. Install with `uv sync --frozen --extra dev` and `npm ci` in `web/`.
 2. Add focused changes with a clear acceptance criterion.
@@ -9,6 +9,6 @@ AgentCommons is agent-neutral. Integrations should preserve independent teammate
 5. Keep the UI accessible: labeled controls, keyboard focus, mobile layout, and meaningful empty/error states.
 6. Document adapter prerequisites and distinguish native product support from a generic SDK or wrapper.
 
-Useful next contributions: native vendor adapters, task capability matching, branch-protected PR integration, search over older messages/memory, multi-user accounts, and a shared-database deployment mode.
+Useful next contributions: [node adapter plugins](docs/adapters.md), branch-protected PR integration, search over older messages/memory, multi-user accounts, and a shared-database deployment mode. Preserve protocol-version checks, cancellation acknowledgement, and legacy database/environment compatibility.
 
 Do not include real API keys, access tokens, private project state, `.env`, or worker logs in a pull request. Test credentials should be clearly synthetic.

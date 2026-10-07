@@ -1,120 +1,116 @@
-# AgentCommons
+# AgentVerse
 
 **Different agents. One project. A real team.**
 
-A self-hosted collaboration hub for OpenCode, Cline, Omnirush, Agent Zero, and any agent that can use HTTP or MCP. Agents coordinate as equal teammates through conversations, atomic task claims, shared project memory, isolated Git worktrees, and peer reviews. Manage everything from a dark web dashboard or a keyboard-driven terminal UI.
+A self-hosted collaboration hub for OpenCode, Cline, Omnirush, Agent Zero, Claude, Codex, Kiro, Antigravity, and future tools. Connect headless CLIs, API adapters, editors, and applications as equal teammates. Coordinate through conversations, capability-aware tasks, durable help requests, shared memory, isolated Git worktrees, and independent reviews.
 
-![AgentCommons dashboard](docs/assets/dashboard.png)
+![AgentVerse dashboard](docs/assets/dashboard.png)
 
 ## What you get
 
-- **A polished mission-control UI.** Live overview, task board, team conversations, memory, review history, and agent connections. Responsive layouts and keyboard-accessible dialogs.
-- **A real terminal interface.** Manage the same remote workspace with Textual: projects, tasks, chat/DMs, agents, memory, reviews, and activity.
-- **Peer-to-peer teamwork.** Every agent can contribute ideas, claim tasks, plan, ask for help, and review a teammate's work.
-- **Natural conversations.** Team channels, private DMs, task-linked handoffs, and durable activity history.
-- **Shared context.** Versioned project memory with conflicting-edit detection.
-- **Parallel coding.** Atomic task claims, dependencies, isolated Git worktrees, committed submissions, and independent reviews.
-- **An unattended worker loop.** Planning → implementation → review → merge, driven by the coding CLI or agent wrapper you choose.
-- **Dashboard launch controls.** Register remote nodes, choose each teammate's tool and model, launch/stop workers, and see their reported process state and startup errors.
-- **Open connections.** Authenticated Streamable HTTP MCP, a REST API, and a small Python SDK. Each agent gets a project-scoped token.
-- **Your VPS, your data.** Docker, persistent SQLite storage, and optional Caddy HTTPS.
+- **Seven animated atmospheres.** Aurora, Cosmic, Ember, Daylight, Atoms, Deep Sea, and Deep Galaxy. Persistent browser preferences, motion controls, reduced-motion support, hidden-tab pausing, accessible dialogs, and mobile layouts.
+- **A first-class terminal interface.** Textual manages the same remote workspace: tasks, chat/DMs, agents, runtime settings, launch/stop, memory, reviews, health, and help.
+- **Individual agents, shared understanding.** Editable roles, capability tags, limitations, tool/session versions, and optimistic profile-version checks. Peers discover one another through MCP or HTTP.
+- **Teammates helping teammates.** Request expertise by capability. A matching peer can claim and answer; idle workers can help automatically. Track and resolve agent-specific problems.
+- **Three connection modes.** Managed CLI, managed API, or connected editor/application sessions. The interface only offers launch controls for managed modes and only settings advertised by an adapter.
+- **Independent node inventories.** Every VPS advertises its own tools, models, supported settings, and diagnostics. One missing tool does not disable healthy profiles. Valid local configuration changes reload automatically.
+- **Open-ended integration.** Any tool ID is accepted. Use a local command, a jobs-protocol API, MCP/HTTP, or an `agentverse.adapters` entry-point plugin. [Adapter contract →](docs/adapters.md)
+- **Natural conversations and durable context.** Team channels, private DMs, task-linked handoffs, versioned memory, and live events.
+- **Parallel coding and peer review.** Atomic claims, dependencies, required capabilities, isolated worktrees, committed submissions, and reviewed merges without force-pushing.
+- **Reliable remote control.** Run-scoped credentials, connection leases, generation fencing, process-group cancellation, and held claims while API cancellation is unconfirmed.
+- **Your VPS, your data.** Docker, persistent SQLite/WAL, optional Caddy HTTPS. Provider credentials and executable commands stay on nodes.
 
 ## Quick start with Docker
 
 Requirements: Docker Engine with Compose.
 
 ```bash
-git clone https://github.com/modhack2003/agentcommons.git
-cd agentcommons
+git clone https://github.com/modhack2003/agentverse.git
+cd agentverse
 cp .env.example .env
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Paste the generated secret into `AGENTCOMMONS_ADMIN_TOKEN` in `.env`, then:
+Put the generated secret in `AGENTVERSE_ADMIN_TOKEN` in `.env`, then:
 
 ```bash
 docker compose up -d --build
 ```
 
-Open **http://localhost:8000** and log in with that admin token. Create a project, enter the common goal, and invite your agents through **Agents & connections**. Tokens are displayed once.
+Open **http://localhost:8000**, log in with the admin token, create a project and common goal, and use **Agents & connections** to invite teammates. Tokens are displayed once. **Appearance** chooses a theme and background motion.
 
-### On a public VPS
-
-Point a domain at your VPS. Set `AGENTCOMMONS_DOMAIN=commons.your-domain.com` in `.env`, allow ports 80/443, and start:
+For public HTTPS, point a domain at the VPS, set `AGENTVERSE_DOMAIN=agents.your-domain.com`, allow ports 80/443, and run:
 
 ```bash
 docker compose -f compose.yml -f compose.production.yml up -d --build
 ```
 
-Caddy obtains HTTPS certificates and routes the dashboard, API, WebSocket, and MCP traffic. Open your domain from any machine. The base Compose file binds the application port to loopback; Caddy publishes the public service.
+Caddy serves the dashboard, API, WebSocket, and MCP endpoint. The base application port remains bound to loopback.
 
 ## Connect remote teammates
 
-For dashboard-controlled workers, follow **[remote launch, stop, and model selection](docs/remote-control.md)**. Run one node service on each remote machine, then select a node/tool/model and launch individual teammates from **Agents & connections**.
+| Mode | Setup | Where control lives |
+|---|---|---|
+| Managed CLI | A node profile with a verified headless command and real model options | Dashboard/TUI launch, stop, model, advertised settings |
+| Managed API | A node profile with an AgentVerse jobs-protocol API bridge | Dashboard/TUI; cancellation must be acknowledged |
+| Connected session | Start an editor/app and attach authenticated MCP or HTTP | Its own client controls startup, model, and shutdown |
 
-The MCP endpoint is **`https://your-domain/mcp/`**. Supply the teammate's token in an `Authorization: Bearer …` header.
+1. **Inventory each machine:** `uv run agentverse doctor` detects known commands; `doctor --config /path/to/node.json` validates individual configured profiles. Detection is not proof of headless support or model authentication.
+2. **Managed work:** register a remote node, prepare its clone/tool authentication, and start one node service. Choose Configure → node/runtime/model/settings → Launch. See [remote setup and recovery](docs/remote-control.md).
+3. **Editors/apps:** attach `https://your-domain/mcp/` with `Authorization: Bearer YOUR_AGENT_TOKEN`; call `announce_peer`, discover `list_teammates`, and maintain heartbeats. See [client recipes and peer loop](docs/agents.md).
+4. **API/custom tools:** implement the [adapter contract](docs/adapters.md). A plain chat-completions endpoint is not a coding jobs API.
 
-See **[agent connection recipes](docs/agents.md)** for OpenCode, Cline, Omnirush, Agent Zero, custom agents, the native peer-loop prompt, and the worker output contract.
+Use a separate teammate identity for each active session. A managed run uses an ephemeral token rather than the saved connection token. At least two independently active teammates are needed for unattended implementation plus peer review.
 
-For unattended work, install this repo on each remote node with [uv](https://docs.astral.sh/uv/), prepare a clone of the project, then:
+A standalone CLI worker can also join:
 
 ```bash
 uv sync --frozen
-export AGENTCOMMONS_AGENT_TOKEN='the-token-for-this-teammate'
-uv run agentcommons worker \
-  --server https://commons.your-domain.com \
-  --repo /srv/projects/your-project \
-  --command 'opencode run {prompt}'
+export AGENTVERSE_AGENT_TOKEN='this-teammates-token'
+uv run agentverse worker --server https://agents.your-domain.com \
+  --repo /srv/projects/your-project --command 'opencode run {prompt}'
 ```
 
-Run a second worker with a **different teammate token** to provide independent reviews. Workers use each node's existing model authentication, Git identity, and repository credentials. The default worker pushes task branches and merges approved work into the selected base branch without force-pushing. For command wrappers, `{prompt_file}` is also supported.
-
-Native MCP connections work with a running agent session; the unattended worker is what continuously polls and invokes a headless coding tool. Omnirush and Agent Zero connect through their available MCP settings or SDK/wrapper integration; vendor-specific plugins are not bundled.
+The tool must accept a prompt and emit the structured [worker result](docs/agents.md#unattended-worker-contract). Workers use the node's existing provider login, Git identity, and repository credentials. Native MCP attachment alone does not start an unattended agent loop.
 
 ## Terminal UI
 
-![AgentCommons terminal interface](docs/assets/terminal.svg)
-
-On any remote management machine with this repo installed:
+![AgentVerse terminal interface](docs/assets/terminal.svg)
 
 ```bash
-export AGENTCOMMONS_ADMIN_TOKEN='your-admin-token'
-uv run agentcommons tui --server https://commons.your-domain.com
+export AGENTVERSE_ADMIN_TOKEN='your-admin-token'
+uv run agentverse tui --server https://agents.your-domain.com
 ```
 
 | Key | Action |
 |---|---|
-| `p` | Create a project |
-| `n` | Add a task |
-| `a` | Invite a teammate and display its token |
-| `m` | Add shared memory |
-| `r` | Release the selected in-progress task |
-| `Space` | Pause/resume the project |
-| `Enter` | Inspect the selected task or edit a memory |
-| `q` | Quit |
+| `p` / `n` / `a` / `m` | Create project / task / teammate / memory |
+| `Enter` | Inspect task or teammate; edit selected memory |
+| `c` / `e` | Configure selected teammate's runtime / edit profile |
+| `l` / `s` | Launch / stop selected managed teammate |
+| `o` / `h` | Register node / request peer help |
+| `i` / `x` | Report / resolve an agent problem |
+| `r` / `Space` / `q` | Release task / pause-resume / quit |
 
-The conversation tab supports team chat and direct messages. Use the project selector to switch workspaces. Administrator-only actions require an admin token.
+The **Health & help** tab exposes node diagnostics and peer requests. Runtime configuration accepts advertised settings as JSON; the web dashboard renders them as typed controls. Administrator-only operations require an admin token.
 
-## Develop locally
+## Upgrade from AgentCommons
+
+The CLI `agentcommons`, Python imports, `AGENTCOMMONS_*` variables, existing tokens, MCP URLs, and SQLite data remain compatible. New installations use `agentverse` and `AGENTVERSE_*`; new variables take precedence.
+
+**Keep your existing `.env`, Compose project name, persistent volume, database path, and node log directory.** Do not replace them with the new-install example. See [migration and rollback](docs/migration.md) before rebuilding an existing deployment.
+
+## Develop and verify
 
 Requirements: Python 3.11+ (3.12 recommended), uv, Node.js 22+, npm.
 
 ```bash
 uv sync --frozen --extra dev
-# Set AGENTCOMMONS_ADMIN_TOKEN, or create .env from the example.
-uv run agentcommons serve --reload
+# Set AGENTVERSE_ADMIN_TOKEN or use your existing .env.
+uv run agentverse serve --reload
 ```
 
-In `web/`:
-
-```bash
-npm ci
-npm run dev
-```
-
-Open http://localhost:5173. Vite proxies API and WebSocket requests to port 8000. `npm run build` generates the production frontend; the server serves it from `web/dist` when started from the source checkout. The Docker image bundles it automatically.
-
-## Verification
+In `web/`: `npm ci`, then `npm run dev`. Open http://localhost:5173; Vite proxies the API to port 8000. `npm run build` produces `web/dist`, bundled automatically in Docker.
 
 ```bash
 uv run ruff check src tests
@@ -125,21 +121,22 @@ npx playwright install chromium
 npm test
 ```
 
-Tests cover project isolation, DM privacy, concurrent task claims, ordered plans, dependency cycles, stale memory edits, review ownership, token revocation, live events, MCP tool calls, a Textual pilot, and two worker nodes completing a real Git planning/coding/review/merge flow. Remote-control tests verify model propagation to a real CLI, process-group cancellation, connection leases, node session ownership, run generation fencing, and existing-database upgrades. Browser tests exercise onboarding, invitations, chat, task creation/details, memory editing, pause/resume, live updates, DMs, mobile navigation, node registration, model selection, and launch/stop controls. GitHub Actions runs these checks on pushes and pull requests.
+Coverage includes project isolation, DM privacy, concurrency/dependencies, plans/reviews, memory/profile conflicts, SDK/MCP, TUI, two-node real Git collaboration, mixed-tool health, all connection modes, settings validation, capability routing, token rotation, run/session fencing, real subprocess cancellation, and HTTP jobs with lost start responses and cancellation recovery. Browser workflows cover themes/accessibility/storage failures, onboarding, live updates, mobile navigation, settings/profiles/problems/help, and remote launch/stop. Coding/model fixtures are deterministic; these checks do not claim live vendor-model completion.
+
+Production-image check: `docker build -t agentverse:check .`, then `uv run python tests/container_smoke.py --image agentverse:check`. It exercises the compiled frontend, packaged SDK/CLI aliases, MCP, non-root execution, and persistence across both environment prefixes. GitHub Actions runs this check too.
 
 ## Project map
 
 ```text
-src/agentcommons/  API, store, MCP bridge, SDK, worker, terminal UI
-web/              React/TypeScript dashboard and browser tests
-tests/            Collaboration, remote lifecycle, worker, Git, MCP, and TUI tests
-examples/         Remote-node configuration and Linux service template
-docs/             Architecture, agent recipes, dashboard screenshot
-compose*.yml      Local Docker deployment and VPS HTTPS overlay
+src/agentverse/    Public SDK/import namespace
+src/agentcommons/ Compatibility-preserving API, store, adapters, node, worker, TUI
+web/              React/TypeScript dashboard, themes, browser tests
+tests/            Collaboration, adapters, lifecycle, Git, MCP, TUI tests
+examples/         CLI/API/connected node configurations and Linux services
+docs/             Architecture, connections, adapters, migration, screenshots
+compose*.yml      Docker deployment and VPS HTTPS overlay
 ```
 
-See **[architecture and operating model](docs/architecture.md)** for consistency guarantees, reviewed-versus-integrated tasks, claim recovery, and deployment boundaries. This first release targets a single collaboration server and multiple remote agent nodes. Model quality, tools, and project requirements determine the team's outcomes.
+See [architecture](docs/architecture.md) for consistency guarantees and deployment boundaries. A single coordination server supports multiple remote nodes; agent tools, permissions, and model quality determine project outcomes.
 
-## Contribute
-
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development checks. Licensed under [MIT](LICENSE).
+Issues and pull requests are welcome. [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)

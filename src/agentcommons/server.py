@@ -1,5 +1,4 @@
 import asyncio
-import os
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -18,6 +17,8 @@ from .models import (
     TaskCreate, TaskEdit, WorkSubmit,
 )
 from .store import Store
+from .config import PRODUCT, VERSION, PROTOCOL_VERSION, setting
+from .models import AgentEdit, AgentAnnounce, HelpCreate, HelpAnswer, IssueCreate
 
 
 class SPAFiles(StaticFiles):
@@ -35,8 +36,7 @@ class SPAFiles(StaticFiles):
 
 
 def create_app(db_path=None, admin_token=None, web_dir=None):
-    store = Store(db_path or os.getenv("AGENTCOMMONS_DB", "data/agentcommons.db"),
-                  admin_token or os.getenv("AGENTCOMMONS_ADMIN_TOKEN", ""))
+    store = Store(db_path or setting("DB", "data/agentcommons.db"), admin_token or setting("ADMIN_TOKEN"))
     mcp = create_mcp(store)
     mcp_app = mcp.streamable_http_app()
     tickets = {}
@@ -47,9 +47,9 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
             yield
         store.close()
 
-    app = FastAPI(title="AgentCommons", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title=PRODUCT, version=VERSION, lifespan=lifespan)
     app.state.store = store
-    origins = [x.strip() for x in os.getenv("AGENTCOMMONS_ORIGINS", "").split(",") if x.strip()]
+    origins = [x.strip() for x in setting("ORIGINS").split(",") if x.strip()]
     if origins:
         app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"],
                            allow_headers=["Authorization", "Content-Type"])
@@ -76,7 +76,14 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
 
     @app.get("/api/health")
     def health():
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": VERSION, "product": PRODUCT}
+
+    @app.get("/api/protocol")
+    def protocol():
+        return {"product": PRODUCT, "version": VERSION, "protocol_version": PROTOCOL_VERSION,
+                "connection_modes": ["managed_cli", "managed_api", "connected"],
+                "peer_transports": ["mcp", "http"], "mcp_path": "/mcp/",
+                "features": ["peer-discovery", "capabilities", "versioned-profiles", "settings-schema", "health", "help-requests"]}
 
     @app.get("/api/me")
     def me(p=Depends(principal)):
@@ -106,6 +113,46 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     def revoke_agent(project_id: str, agent_id: str, p=Depends(principal)):
         return store.revoke_agent(p, project_id, agent_id)
 
+    @app.patch("/api/projects/{project_id}/agents/{agent_id}")
+    def edit_agent(project_id: str, agent_id: str, data: AgentEdit, p=Depends(principal)):
+        return store.team.edit(p, project_id, agent_id, data)
+
+    @app.post("/api/projects/{project_id}/agents/{agent_id}/token")
+    def rotate_token(project_id: str, agent_id: str, p=Depends(principal)):
+        return store.rotate_agent_token(p, project_id, agent_id)
+
+    @app.post("/api/agents/announce")
+    def announce(data: AgentAnnounce, p=Depends(principal)):
+        return store.team.announce(p, data)
+
+    @app.get("/api/projects/{project_id}/teammates")
+    def teammates(project_id: str, capability: str = "", p=Depends(principal)):
+        return store.team.peers(p, project_id, capability)
+
+    @app.post("/api/projects/{project_id}/agents/{agent_id}/issues")
+    def issue(project_id: str, agent_id: str, data: IssueCreate, p=Depends(principal)):
+        return store.team.issue(p, project_id, agent_id, data)
+
+    @app.post("/api/projects/{project_id}/issues/{issue_id}/resolve")
+    def resolve_issue(project_id: str, issue_id: str, p=Depends(principal)):
+        return store.team.resolve(p, project_id, issue_id)
+
+    @app.post("/api/projects/{project_id}/help")
+    def ask_help(project_id: str, data: HelpCreate, p=Depends(principal)):
+        return store.team.ask(p, project_id, data)
+
+    @app.post("/api/projects/{project_id}/help/{help_id}/claim")
+    def claim_help(project_id: str, help_id: str, p=Depends(principal)):
+        return store.team.claim_help(p, project_id, help_id)
+
+    @app.post("/api/projects/{project_id}/help/{help_id}/answer")
+    def answer_help(project_id: str, help_id: str, data: HelpAnswer, p=Depends(principal)):
+        return store.team.answer(p, project_id, help_id, data)
+
+    @app.post("/api/projects/{project_id}/help/{help_id}/release")
+    def release_help(project_id: str, help_id: str, p=Depends(principal)):
+        return store.team.release_help(p, project_id, help_id)
+
     @app.get("/api/projects/{project_id}/nodes")
     def nodes(project_id: str, p=Depends(principal)):
         return store.runtimes.nodes(p, project_id)
@@ -129,6 +176,10 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     @app.post("/api/nodes/me/register")
     def register_node(data: NodeRegister, node=Depends(node_identity)):
         return store.runtimes.register(node, data)
+
+    @app.post("/api/nodes/me/inventory")
+    def node_inventory(data: NodeRegister, node=Depends(node_identity)):
+        return store.runtimes.refresh_inventory(node, data)
 
     @app.post("/api/nodes/me/poll")
     def poll_node(data: NodePoll, node=Depends(node_identity)):
@@ -244,7 +295,7 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
             pass
 
     app.mount("/mcp", mcp_app)
-    dist = Path(web_dir or os.getenv("AGENTCOMMONS_WEB_DIR", Path(__file__).resolve().parents[2] / "web/dist"))
+    dist = Path(web_dir or setting("WEB_DIR", Path(__file__).resolve().parents[2] / "web/dist"))
     if (dist / "index.html").is_file():
         app.mount("/", SPAFiles(directory=dist, html=True), name="web")
     return app

@@ -15,6 +15,7 @@ from fastapi import HTTPException
 
 from .models import AgentCreate, MemoryWrite, MessageCreate, PlanFinish, ProjectCreate, TaskCreate
 from .orchestration import ACTIVE_STATES, RuntimeRegistry
+from .team import TeamRegistry
 
 
 def uid(prefix: str) -> str:
@@ -43,7 +44,7 @@ class Principal:
 class Store:
     def __init__(self, path: str, admin_token: str):
         if len(admin_token) < 24 or admin_token.startswith("replace-"):
-            raise ValueError("Set AGENTCOMMONS_ADMIN_TOKEN to a random secret of at least 24 characters.")
+            raise ValueError("Set AGENTVERSE_ADMIN_TOKEN (or legacy AGENTCOMMONS_ADMIN_TOKEN) to a random secret of at least 24 characters.")
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.admin_hash = hashlib.sha256(admin_token.encode()).hexdigest()
@@ -101,6 +102,7 @@ class Store:
         if "revoked" not in {row["name"] for row in self.db.execute("PRAGMA table_info(agents)")}:
             self.db.execute("ALTER TABLE agents ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
         self.runtimes = RuntimeRegistry(self, admin_token)
+        self.team = TeamRegistry(self)
 
     def close(self):
         with self.lock:
@@ -138,6 +140,9 @@ class Store:
         agent = self.one("SELECT id, project_id FROM agents WHERE token_hash=? AND revoked=0", (digest,))
         if not agent:
             fail(401, "Invalid or revoked token.")
+        runtime = self.runtimes.runtime(agent["id"])
+        if runtime and runtime["state"] in ACTIVE_STATES:
+            fail(401, "This identity has a managed run. Its worker uses a run-scoped token; connect other sessions as a separate teammate.")
         return Principal(agent["id"], agent["project_id"])
 
     def admin_only(self, principal):
@@ -204,6 +209,8 @@ class Store:
                 (agent_id, project_id, data.name, data.kind, json.dumps(data.capabilities),
                  hashlib.sha256(token.encode()).hexdigest(), time.time()),
             )
+            self.db.execute("UPDATE agents SET description=?,limitations=? WHERE id=?",
+                            (data.description, json.dumps(data.limitations), agent_id))
             self.event(project_id, "agent.joined", principal, agent_id, f"{data.name} joined the team")
         return {"agent": self.agent(principal, project_id, agent_id), "token": token}
 
@@ -214,10 +221,33 @@ class Store:
             fail(404, "Agent not found.")
         row.pop("token_hash")
         row["capabilities"] = json.loads(row["capabilities"])
+        row["limitations"] = json.loads(row["limitations"])
+        row["session_info"] = json.loads(row["session_info"])
+        row["configured_capabilities"] = list(row["capabilities"])
+        row["configured_limitations"] = list(row["limitations"])
+        row["capabilities"] = list(dict.fromkeys(row["capabilities"] + row["session_info"].get("capabilities", [])))
+        row["limitations"] = list(dict.fromkeys(row["limitations"] + row["session_info"].get("limitations", [])))
         row["online"] = row["status"] != "offline" and time.time() - row["last_seen"] < 90
         row["revoked"] = bool(row["revoked"])
         row["runtime"] = self.runtimes.runtime(agent_id)
+        if row["runtime"] and row["runtime"]["state"] in ACTIVE_STATES:
+            row["online"] = row["online"] and self.runtimes.node(project_id, row["runtime"]["node_id"])["online"]
         return row
+
+    def rotate_agent_token(self, principal, project_id, agent_id):
+        self.admin_only(principal)
+        token = f"ac_{secrets.token_urlsafe(32)}"
+        with self.transaction():
+            self.agent(principal, project_id, agent_id)
+            runtime = self.runtimes.runtime(agent_id)
+            if runtime and runtime["state"] in ACTIVE_STATES or self.one(
+                "SELECT id FROM tasks WHERE (assignee_id=? AND status='in_progress') OR (reviewer_id=? AND status='review')",
+                 (agent_id, agent_id)) or self.one("SELECT id FROM help_requests WHERE assignee_id=? AND state='in_progress'", (agent_id,)):
+                fail(409, "Stop or release this teammate's current work before rotating its connection token.")
+            self.db.execute("UPDATE agents SET token_hash=?,revoked=0,status='offline' WHERE id=?",
+                            (hashlib.sha256(token.encode()).hexdigest(), agent_id))
+            self.event(project_id, "agent.token_rotated", principal, agent_id, "Rotated teammate connection token")
+        return {"agent": self.agent(principal, project_id, agent_id), "token": token}
 
     def revoke_agent(self, principal, project_id, agent_id):
         self.admin_only(principal)
@@ -233,6 +263,7 @@ class Store:
                     "UPDATE tasks SET status='backlog',assignee_id=NULL,updated_at=? "
                     "WHERE assignee_id=? AND status='in_progress'", (time.time(), agent_id))
                 self.db.execute("UPDATE tasks SET reviewer_id=NULL WHERE reviewer_id=?", (agent_id,))
+                self.db.execute("UPDATE help_requests SET assignee_id=NULL,state='open' WHERE assignee_id=? AND state='in_progress'", (agent_id,))
             self.event(project_id, "agent.revoked", principal, agent_id, "Agent access revoked")
         return {"ok": True}
 
@@ -246,20 +277,22 @@ class Store:
         return {"ok": True, "agent_id": principal.agent_id, "project_id": principal.project_id,
                 "stop_requested": bool(runtime and runtime["desired_state"] == "stopped")}
 
+    def _message(self, principal, project_id, data: MessageCreate):
+        self.project(principal, project_id)
+        if data.recipient_id and data.recipient_id != "human":
+            self.agent(principal, project_id, data.recipient_id)
+        if data.task_id:
+            self.task(principal, project_id, data.task_id)
+        message_id = uid("msg")
+        self.db.execute("INSERT INTO messages VALUES(?,?,?,?,?,?,?,?)",
+                        (message_id, project_id, principal.actor, data.recipient_id, data.channel,
+                         data.content, data.task_id, time.time()))
+        self.event(project_id, "message.sent", principal, message_id, data.content[:160], data.recipient_id)
+        return message_id
+
     def message(self, principal, project_id, data: MessageCreate):
         with self.transaction():
-            self.project(principal, project_id)
-            if data.recipient_id and data.recipient_id != "human":
-                self.agent(principal, project_id, data.recipient_id)
-            if data.task_id:
-                self.task(principal, project_id, data.task_id)
-            message_id = uid("msg")
-            self.db.execute(
-                "INSERT INTO messages VALUES(?,?,?,?,?,?,?,?)",
-                (message_id, project_id, principal.actor, data.recipient_id, data.channel,
-                 data.content, data.task_id, time.time()),
-            )
-            self.event(project_id, "message.sent", principal, message_id, data.content[:160], data.recipient_id)
+            message_id = self._message(principal, project_id, data)
         return self.one("SELECT * FROM messages WHERE id=?", (message_id,))
 
     def visible_sql(self, principal):
@@ -298,9 +331,9 @@ class Store:
         task_id, now = uid("tsk"), time.time()
         self.db.execute(
             "INSERT INTO tasks(id,project_id,title,description,priority,kind,dependencies,"
-            "created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            "created_by,created_at,updated_at,required_capabilities) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
             (task_id, project_id, data.title, data.description, data.priority, data.kind,
-             json.dumps(data.dependencies), principal.actor, now, now),
+             json.dumps(data.dependencies), principal.actor, now, now, json.dumps(data.required_capabilities)),
         )
         self.event(project_id, "task.created", principal, task_id, data.title)
         return task_id
@@ -317,6 +350,7 @@ class Store:
         if not task:
             fail(404, "Task not found.")
         task["dependencies"] = json.loads(task["dependencies"])
+        task["required_capabilities"] = json.loads(task["required_capabilities"])
         task["blocked"] = any(
             self.one("SELECT status FROM tasks WHERE id=?", (dep,))["status"] != "done"
             for dep in task["dependencies"]
@@ -339,6 +373,8 @@ class Store:
                 self.dependencies(project_id, updates["dependencies"], task_id)
                 updates["dependencies"] = json.dumps(updates["dependencies"])
             for key, value in updates.items():
+                if key == "required_capabilities":
+                    value = json.dumps(value)
                 self.db.execute(f"UPDATE tasks SET {key}=?,updated_at=? WHERE id=?",
                                 (value, time.time(), task_id))
             self.event(project_id, "task.updated", principal, task_id, task["title"])
@@ -353,6 +389,9 @@ class Store:
             task = self.task(principal, project_id, task_id)
             if task["status"] != "backlog" or task["blocked"]:
                 fail(409, "This task is already claimed or has unfinished dependencies.")
+            peer = self.agent(principal, project_id, principal.agent_id)
+            if not set(task["required_capabilities"]).issubset(peer["capabilities"]):
+                fail(409, "This task requires capabilities not advertised by this teammate.")
             if self.one("SELECT id FROM tasks WHERE assignee_id=? AND status='in_progress'",
                         (principal.agent_id,)):
                 fail(409, "Finish or release your current task first.")
@@ -376,6 +415,7 @@ class Store:
                 fail(403, "Only the assignee or an administrator can release a task.")
             if task["status"] != "in_progress":
                 fail(409, "Only in-progress tasks can be released.")
+            self.runtimes.release_allowed(task["assignee_id"])
             self.db.execute("UPDATE tasks SET status='backlog',assignee_id=NULL,updated_at=? WHERE id=?",
                             (time.time(), task_id))
             self.event(project_id, "task.released", principal, task_id, reason)
@@ -440,6 +480,7 @@ class Store:
                 fail(403, "Only the reviewer or an administrator can release this review.")
             if task["status"] != "review":
                 fail(409, "This task is not in review.")
+            self.runtimes.release_allowed(task["reviewer_id"])
             self.db.execute("UPDATE tasks SET reviewer_id=NULL,updated_at=? WHERE id=?", (time.time(), task_id))
             self.event(project_id, "review.released", principal, task_id, task["title"])
         return self.task(principal, project_id, task_id)
@@ -514,6 +555,7 @@ class Store:
                 (project_id, principal.actor, principal.actor))))
             return {
                 "project": project, "agents": agents, "nodes": self.runtimes.nodes(principal, project_id),
+                "issues": self.team.issues(principal, project_id), "help_requests": self.team.help_requests(principal, project_id),
                 "tasks": self.tasks(principal, project_id),
                 "messages": self.messages(principal, project_id), "memories": self.memories(principal, project_id),
                 "reviews": self.all("SELECT * FROM reviews WHERE project_id=? ORDER BY created_at DESC",

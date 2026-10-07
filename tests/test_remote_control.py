@@ -218,21 +218,32 @@ def test_supervisor_launches_model_and_stops_real_worker_and_cli_children(live_s
         service.shutdown()
 
 
-def test_missing_remote_executable_is_reported_before_registration(live_server, tmp_path):
+def test_missing_tool_does_not_disable_other_node_profiles(live_server, tmp_path):
     url, client = live_server
     p = project(client)
-    _, _, token = node(client, p, register=False)
+    node_id, _, token = node(client, p, register=False)
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "--initial-branch=main"], cwd=repo, check=True, capture_output=True)
     subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "--allow-empty", "-m", "Initial"],
                    cwd=repo, check=True, capture_output=True)
-    service = NodeService(url, token, NodeConfig(repo=str(repo), profiles=[{
-        **PROFILES[0], "argv": ["agentcommons-nonexistent-executable"],
-    }]))
-    with pytest.raises(ValueError, match="not installed"):
-        service.register()
-    service.http.close()
+    service = NodeService(url, token, NodeConfig(repo=str(repo), log_dir=str(tmp_path / "logs"), profiles=[
+        {**PROFILES[0], "argv": ["agentverse-nonexistent-executable"]},
+        {**PROFILES[0], "id": "healthy", "name": "Healthy CLI", "argv": [sys.executable]},
+    ]))
+    try:
+        registered = service.register()["node"]
+        assert registered["online"]
+        assert registered["profiles"][0]["availability"] == "unavailable"
+        assert registered["profiles"][1]["availability"] == "available"
+        a, _, _ = agent(client, p, "Healthy teammate")
+        configure(client, p, a, node_id)
+        assert client.post(f"/api/projects/{p}/agents/{a}/launch").status_code == 409
+        response = client.put(f"/api/projects/{p}/agents/{a}/runtime", json={"node_id": node_id, "profile_id": "healthy", "model": "provider/deep"})
+        assert response.status_code == 200
+        assert client.post(f"/api/projects/{p}/agents/{a}/launch").status_code == 200
+    finally:
+        service.shutdown()
 
 
 def test_managed_launch_does_not_duplicate_an_external_agent_session(api):

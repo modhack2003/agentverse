@@ -1,12 +1,16 @@
 {
   "repo": "/srv/projects/your-project",
   "max_workers": 4,
-  "log_dir": "~/.local/state/agentcommons/logs",
+  "log_dir": "~/.local/state/agentverse/logs",
   "profiles": [
     {
       "id": "opencode",
       "name": "OpenCode CLI",
       "kind": "opencode",
+      "mode": "managed_cli",
+      "driver": "cli",
+      "capabilities": ["backend", "review"],
+      "limitations": ["Requires provider login and a prepared Git clone"],
       "argv": ["opencode", "run", "--model", "{model}", "{prompt}"],
       "models": [
         {"id": "your-provider/your-coding-model", "name": "Fast coding model"},
@@ -15,6 +19,14 @@
       "base": "main",
       "push": true,
       "timeout": 1800
+    },
+    {
+      "id": "cline-editor",
+      "name": "Cline editor session",
+      "kind": "cline",
+      "mode": "connected",
+      "capabilities": ["frontend", "review"],
+      "limitations": ["Start the editor session manually; choose its model in the editor"]
     }
   ]
 }

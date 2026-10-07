@@ -8,8 +8,8 @@ export default defineConfig({
     launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {},
   },
   webServer: [
-    { command: 'uv run --project .. agentcommons serve --port 8000', url: 'http://127.0.0.1:8000/api/health', reuseExistingServer: false,
-      env: { AGENTCOMMONS_ADMIN_TOKEN: 'browser-test-only-token-not-a-secret', AGENTCOMMONS_DB: `/tmp/agentcommons-browser-${process.pid}.db` } },
+    { command: 'uv run --project .. agentverse serve --port 8000', url: 'http://127.0.0.1:8000/api/health', reuseExistingServer: false,
+      env: { AGENTVERSE_ADMIN_TOKEN: 'browser-test-only-token-not-a-secret', AGENTVERSE_DB: `/tmp/agentverse-browser-${process.pid}.db` } },
     { command: 'npm run dev -- --port 5173', url: 'http://127.0.0.1:5173', reuseExistingServer: false },
   ],
 })

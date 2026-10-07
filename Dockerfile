@@ -15,4 +15,4 @@ COPY --from=web /build/dist/ web/dist/
 USER commons
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"
-CMD ["agentcommons", "serve", "--host", "0.0.0.0"]
+CMD ["agentverse", "serve", "--host", "0.0.0.0"]

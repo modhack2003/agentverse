@@ -1,0 +1,21 @@
+{
+  "repo": "/srv/projects/your-project",
+  "max_workers": 2,
+  "profiles": [
+    {
+      "id": "my-api",
+      "name": "My jobs API adapter",
+      "kind": "custom",
+      "mode": "managed_api",
+      "driver": "http",
+      "http": {"url": "http://127.0.0.1:9000/", "token_env": "MY_AGENT_API_TOKEN"},
+      "capabilities": ["python", "review"],
+      "limitations": ["The jobs endpoint must share the node's worktree filesystem"],
+      "models": [{"id": "", "name": "Adapter default"}],
+      "settings_schema": [
+        {"key": "respond_to_help", "label": "Respond to teammate help", "type": "boolean", "default": true},
+        {"key": "effort", "label": "Reasoning effort", "type": "choice", "options": ["low", "high"], "default": "high", "help": "Applied by your jobs API, not by AgentVerse itself."}
+      ]
+    }
+  ]
+}

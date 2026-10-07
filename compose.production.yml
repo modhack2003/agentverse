@@ -6,7 +6,7 @@ services:
       - "80:80"
       - "443:443"
     environment:
-      AGENTCOMMONS_DOMAIN: ${AGENTCOMMONS_DOMAIN:?Set your public hostname in .env}
+      AGENTVERSE_DOMAIN: ${AGENTVERSE_DOMAIN:-${AGENTCOMMONS_DOMAIN:-}}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

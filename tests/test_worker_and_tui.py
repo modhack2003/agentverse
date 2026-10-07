@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from textual.widgets import DataTable, Input
+from textual.widgets import DataTable, Input, TabbedContent, TextArea
 
 from agentcommons.tui import CommonsTUI
 from agentcommons.worker import Worker, result_json
@@ -63,7 +63,10 @@ def test_tui_loads_remote_data_and_sends_chat(live_server):
             assert app.query_one("#tasks", DataTable).row_count == 1
             assert app.query_one("#agents", DataTable).row_count == 1
             if os.getenv("UPDATE_TUI_SCREENSHOT"):
-                app.save_screenshot("terminal.svg", path=str(Path(__file__).parents[1] / "docs/assets"))
+                assets = Path(__file__).parents[1] / "docs/assets"
+                app.save_screenshot("terminal.svg", path=str(assets))
+                image = assets / "terminal.svg"
+                image.write_text("\n".join(line.rstrip() for line in image.read_text().splitlines()) + "\n")
             app.query_one("#chat-input", Input).value = "A handoff from the terminal"
             await app.send()
             await pilot.pause(0.3)
@@ -77,3 +80,45 @@ def test_agent_result_requires_structured_output():
     assert result_json('some prose\n```agentcommons\n{"summary":"done"}\n```')["summary"] == "done"
     with pytest.raises(RuntimeError):
         result_json("I might have finished it.")
+
+
+def test_tui_runtime_profile_launch_stop_and_peer_help(live_server):
+    from test_remote_control import node
+    url, client = live_server
+    p = project(client)
+    a, _, _ = agent(client, p, "Terminal managed peer")
+    node(client, p)
+    async def pilot_test():
+        app = CommonsTUI(url, TOKEN)
+        async with app.run_test(size=(140, 50)) as pilot:
+            await pilot.pause(1)
+            app.query_one(TabbedContent).active = "agents-tab"
+            app.query_one("#agents", DataTable).focus()
+            await pilot.press("e")
+            await pilot.pause(.2)
+            app.screen.query_one("#field-capabilities", Input).value = "python, review"
+            await pilot.click("#save")
+            await pilot.pause(.5)
+            app.query_one("#agents", DataTable).focus()
+            await pilot.press("c")
+            await pilot.pause(.2)
+            await pilot.click("#save")
+            await pilot.pause(.5)
+            app.query_one("#agents", DataTable).focus()
+            await pilot.press("l")
+            await pilot.pause(.3)
+            assert client.get(f"/api/projects/{p}/snapshot").json()["agents"][0]["runtime"]["state"] == "queued"
+            await pilot.press("s")
+            await pilot.pause(.3)
+            assert client.get(f"/api/projects/{p}/snapshot").json()["agents"][0]["runtime"]["state"] == "stopped"
+            await pilot.press("h")
+            await pilot.pause(.2)
+            app.screen.query_one("#field-capability", Input).value = "review"
+            app.screen.query_one("#field-question", TextArea).text = "Check this terminal workflow"
+            await pilot.click("#save")
+            await pilot.pause(.3)
+            snap = client.get(f"/api/projects/{p}/snapshot").json()
+            assert snap["agents"][0]["id"] == a and snap["agents"][0]["configured_capabilities"] == ["python", "review"]
+            assert snap["help_requests"][0]["recipient_id"] == a
+        await app.http.aclose()
+    asyncio.run(pilot_test())

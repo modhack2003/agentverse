@@ -1,6 +1,7 @@
 """The terminal is a first-class client of the same remote collaboration API."""
 
 import httpx
+import json
 from rich.markup import escape
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -81,7 +82,7 @@ class DetailScreen(ModalScreen):
 
 
 class CommonsTUI(App):
-    TITLE = "AgentCommons"
+    TITLE = "AgentVerse"
     SUB_TITLE = "Different agents. One project. A real team."
     CSS = """
     Screen { background: #101115; color: #e6e7eb; }
@@ -107,6 +108,9 @@ class CommonsTUI(App):
         ("q", "quit", "Quit"), ("p", "new_project", "Project"), ("n", "new_task", "Task"),
         ("a", "add_agent", "Agent"), ("m", "new_memory", "Memory"),
         ("r", "release_task", "Release task"), ("space", "toggle_pause", "Pause/resume"),
+        ("c", "configure_agent", "Runtime"), ("l", "launch_agent", "Launch"), ("s", "stop_agent", "Stop"),
+        ("e", "edit_agent", "Profile"), ("h", "request_help", "Ask peer"), ("o", "add_node", "Node"),
+        ("i", "report_problem", "Problem"), ("x", "resolve_problem", "Resolve"),
     ]
 
     def __init__(self, server, token):
@@ -121,7 +125,7 @@ class CommonsTUI(App):
         yield Header(show_clock=True)
         with Horizontal(id="project-bar"):
             yield Select([], prompt="Choose a project", id="project-select")
-            yield Static("Connecting to the commons…", id="status")
+            yield Static("Connecting to AgentVerse…", id="status")
         yield Static("Create a project [p] and invite your remote teammates [a].", id="goal")
         with TabbedContent():
             with TabPane("Tasks", id="tasks-tab"):
@@ -140,6 +144,8 @@ class CommonsTUI(App):
                 yield RichLog(id="reviews", wrap=True, markup=True)
             with TabPane("Activity", id="activity-tab"):
                 yield RichLog(id="activity", wrap=True, markup=True)
+            with TabPane("Health & help", id="health-tab"):
+                yield RichLog(id="health", wrap=True, markup=False)
         yield Footer()
 
     async def call(self, method, path, data=None):
@@ -150,7 +156,7 @@ class CommonsTUI(App):
 
     async def on_mount(self):
         self.query_one("#tasks", DataTable).add_columns("State", "Priority", "Task", "Owner", "Dependencies")
-        self.query_one("#agents", DataTable).add_columns("Connection", "Name", "Tool", "Strengths", "Runtime", "Model")
+        self.query_one("#agents", DataTable).add_columns("Connection", "Name", "Tool", "Strengths", "Mode", "Runtime", "Model")
         self.query_one("#memories", DataTable).add_columns("Version", "Title", "Tags", "Author")
         try:
             self.is_admin = (await self.call("GET", "/api/me"))["admin"]
@@ -211,7 +217,7 @@ class CommonsTUI(App):
                 runtime = agent["runtime"] or {}
                 self.query_one("#agents", DataTable).add_row(
                     agent["status"] if agent["online"] else "offline", escape(agent["name"]), escape(agent["kind"]),
-                    escape(", ".join(agent["capabilities"])), runtime.get("state", "external"),
+                    escape(", ".join(agent["capabilities"])), runtime.get("mode", "connected"), runtime.get("state", "external"),
                     escape(runtime.get("model") or "tool default"), key=agent["id"])
             for memory in data["memories"]:
                 self.query_one("#memories", DataTable).add_row(str(memory["version"]), escape(memory["title"]),
@@ -245,6 +251,17 @@ class CommonsTUI(App):
                 for row in rows:
                     text = f"{row['decision']} · {name(row['reviewer_id'])}\n{row['comment']}" if log_id == "reviews" else f"{name(row['actor_id'])} · {row['detail']}"
                     log.write(escape(text) + "\n")
+            health = self.query_one("#health", RichLog)
+            health.clear()
+            for node in nodes.values():
+                health.write(f"{node['name']} · {'online' if node['online'] else 'offline'} · capacity {node['capacity']}")
+                for profile in node["profiles"]:
+                    health.write(f"  {profile['id']} · {profile['mode']} · {profile['availability']}\n  {profile['diagnostic']}")
+            for issue in data["issues"]:
+                if not issue["resolved"]:
+                    health.write(f"\n{issue['id']} · {issue['severity'].upper()} · {name(issue['agent_id'])} · {issue['title']}\n{issue['detail']}")
+            for request in data["help_requests"][:20]:
+                health.write(f"\n{request['state']} · {request['capability'] or 'general'} · {name(request['sender_id'])}\n{request['question']}\n{request['answer'] or 'Waiting for a matching teammate.'}")
         except Exception as exc:
             self.notify(str(exc), severity="error")
 
@@ -267,11 +284,23 @@ class CommonsTUI(App):
             if data is None:
                 return
             try:
-                if "tags" in data:
-                    data["tags"] = [t.strip() for t in data["tags"].split(",") if t.strip()]
-                result = await self.call(method, path, {**data, **(extra or {})})
+                for key in ("tags", "capabilities", "required_capabilities"):
+                    if key in data:
+                        data[key] = [t.strip() for t in data[key].split(",") if t.strip()]
+                if "limitations" in data:
+                    data["limitations"] = [t.strip() for t in data["limitations"].splitlines() if t.strip()]
+                if "settings" in data:
+                    data["settings"] = json.loads(data["settings"] or "{}")
+                route = path
+                if "issue_id" in data:
+                    from urllib.parse import quote
+                    route = route.replace("{issue_id}", quote(data.pop("issue_id"), safe=""))
+                result = await self.call(method, route, {**data, **(extra or {})})
                 if secret:
-                    self.push_screen(DetailScreen(f"AGENT TOKEN — save this now, shown once\n\n{result['token']}\n\nRemote MCP endpoint\n{self.server}/mcp/"))
+                    self.push_screen(DetailScreen(f"CONNECTION TOKEN — save this now, shown once\n\n{result['token']}\n\n"
+                        f"MCP endpoint: {self.server}/mcp/\nEditors/apps: attach MCP, call announce_peer and list_teammates, heartbeat every 25s.\n"
+                        "Managed tools: prepare a node config; run agentverse doctor and agentverse node.\n"
+                        "A node token connects the supervisor; a teammate token connects one agent.\nSee docs/agents.md and docs/remote-control.md."))
                     return
                 await self.load_projects()
                 self.refresh_remote()
@@ -288,13 +317,98 @@ class CommonsTUI(App):
     def action_new_task(self):
         if self.project_id:
             self.form("Give the team a next step", [("title", "Task title", False, ""),
-                ("description", "Description & acceptance criteria", True, "")], f"/api/projects/{self.project_id}/tasks")
+                ("description", "Description & acceptance criteria", True, ""),
+                ("required_capabilities", "Required capabilities (comma-separated; optional)", False, "")], f"/api/projects/{self.project_id}/tasks")
 
     def action_add_agent(self):
         if self.is_admin and self.project_id:
             self.form("Meet your new teammate", [("name", "Teammate name", False, ""),
-                ("kind", "Tool: opencode / cline / omnirush / agentzero / custom", False, "custom")],
+                ("kind", "Tool ID: any current or future tool", False, "custom"),
+                ("capabilities", "Strengths (comma-separated)", False, ""),
+                ("limitations", "Limitations (one per line)", True, "")],
                 f"/api/projects/{self.project_id}/agents", secret=True)
+
+    def selected_agent(self):
+        table = self.query_one("#agents", DataTable)
+        if not self.snapshot or not table.row_count:
+            self.notify("Select a teammate in the Team tab first.")
+            return None
+        key = table.coordinate_to_cell_key(table.cursor_coordinate).row_key.value
+        return next((a for a in self.snapshot["agents"] if a["id"] == key), None)
+
+    @on(DataTable.RowSelected, "#agents")
+    def agent_detail(self, event):
+        agent = next(a for a in self.snapshot["agents"] if a["id"] == event.row_key.value)
+        self.push_screen(DetailScreen(json.dumps(agent, indent=2) + "\n\n[c] Runtime · [e] Profile · [l] Launch · [s] Stop\n"
+            "Connected sessions start/stop in their own client. Managed API claims stay held while cancellation is unconfirmed."))
+
+    def action_edit_agent(self):
+        peer = self.selected_agent()
+        if self.is_admin and peer:
+            self.form(f"Edit {peer['name']}’s profile", [("name", "Name", False, peer["name"]),
+                ("description", "Role & context", True, peer["description"]),
+                ("capabilities", "Strengths (comma-separated)", False, ", ".join(peer["configured_capabilities"])),
+                ("limitations", "Limitations (one per line)", True, "\n".join(peer["configured_limitations"]))],
+                f"/api/projects/{self.project_id}/agents/{peer['id']}", "PATCH", {"expected_version": peer["profile_version"]})
+
+    def action_configure_agent(self):
+        peer = self.selected_agent()
+        if not self.is_admin or not peer:
+            return
+        options = [(n, p) for n in self.snapshot["nodes"] for p in n["profiles"] if peer["kind"] in {"custom", p["kind"]}]
+        if not options:
+            self.notify("No matching runtime profiles. Register a node [o], configure its tools, and start its service.")
+            return
+        n, p = options[0]
+        current = peer["runtime"] or {}
+        catalog = " · ".join(f"{n['name']}: {n['id']}/{p['id']} ({p['mode']})" for n, p in options)
+        self.form(f"Runtime for {peer['name']}\n{catalog}", [
+            ("node_id", "Node ID", False, current.get("node_id", n["id"])),
+            ("profile_id", "Profile ID", False, current.get("profile_id", p["id"])),
+            ("model", "Advertised model ID (empty = tool default)", False, current.get("model", p["models"][0]["id"])),
+            ("settings", "Advertised settings as JSON (see Team details / web UI)", True, json.dumps(current.get("settings", {})))],
+            f"/api/projects/{self.project_id}/agents/{peer['id']}/runtime", "PUT")
+
+    async def agent_operation(self, operation):
+        peer = self.selected_agent()
+        if self.is_admin and peer:
+            try:
+                await self.call("POST", f"/api/projects/{self.project_id}/agents/{peer['id']}/{operation}")
+                self.refresh_remote()
+            except Exception as exc:
+                self.notify(str(exc), severity="error")
+
+    async def action_launch_agent(self):
+        await self.agent_operation("launch")
+
+    async def action_stop_agent(self):
+        await self.agent_operation("stop")
+
+    def action_request_help(self):
+        if self.project_id:
+            self.form("Ask an equal teammate for help", [("capability", "Capability needed (optional, exact tag)", False, ""),
+                ("question", "Question & context (shared with the project)", True, "")], f"/api/projects/{self.project_id}/help")
+
+    def action_add_node(self):
+        if self.is_admin and self.project_id:
+            self.form("Register a remote node", [("name", "Node name", False, "")], f"/api/projects/{self.project_id}/nodes", secret=True)
+
+    def action_report_problem(self):
+        peer = self.selected_agent()
+        if peer and (self.is_admin or self.snapshot["identity"]["actor_id"] == peer["id"]):
+            self.form(f"Report a problem for {peer['name']}", [("title", "Problem", False, ""),
+                ("detail", "Details (no credentials)", True, ""), ("severity", "info / warning / error", False, "warning")],
+                f"/api/projects/{self.project_id}/agents/{peer['id']}/issues")
+
+    def action_resolve_problem(self):
+        if not self.snapshot:
+            return
+        issues = [i for i in self.snapshot["issues"] if not i["resolved"] and (self.is_admin or i["agent_id"] == self.snapshot["identity"]["actor_id"])]
+        if not issues:
+            self.notify("No open problems for this identity.")
+            return
+        self.form("Resolve an agent problem", [("issue_id", "Issue ID (see Health & help)", False, issues[0]["id"])],
+                  f"/api/projects/{self.project_id}/issues/{{issue_id}}/resolve")
 
     def action_new_memory(self):
         if self.project_id:
