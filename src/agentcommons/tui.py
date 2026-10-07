@@ -150,7 +150,7 @@ class CommonsTUI(App):
 
     async def on_mount(self):
         self.query_one("#tasks", DataTable).add_columns("State", "Priority", "Task", "Owner", "Dependencies")
-        self.query_one("#agents", DataTable).add_columns("Connection", "Name", "Tool", "Strengths")
+        self.query_one("#agents", DataTable).add_columns("Connection", "Name", "Tool", "Strengths", "Runtime", "Model")
         self.query_one("#memories", DataTable).add_columns("Version", "Title", "Tags", "Author")
         try:
             self.is_admin = (await self.call("GET", "/api/me"))["admin"]
@@ -192,8 +192,9 @@ class CommonsTUI(App):
                 return
             self.snapshot = data
             agents = {a["id"]: a for a in data["agents"]}
+            nodes = {node["id"]: node for node in data["nodes"]}
             def name(actor):
-                return "You" if actor == "human" else agents.get(actor, {}).get("name", "—")
+                return "You" if actor == "human" else agents.get(actor, {}).get("name", nodes.get(actor, {}).get("name", "—"))
             online = sum(a["online"] for a in agents.values())
             done = sum(t["status"] == "done" for t in data["tasks"])
             self.query_one("#status", Static).update(f"● {online} agents online    {done}/{len(data['tasks'])} complete    {data['project']['status'].upper()}")
@@ -207,9 +208,11 @@ class CommonsTUI(App):
                     "blocked" if task["blocked"] and task["status"] == "backlog" else task["status"], task["priority"],
                     escape(task["title"]), escape(name(task["assignee_id"])), str(len(task["dependencies"])), key=task["id"])
             for agent in agents.values():
+                runtime = agent["runtime"] or {}
                 self.query_one("#agents", DataTable).add_row(
                     agent["status"] if agent["online"] else "offline", escape(agent["name"]), escape(agent["kind"]),
-                    escape(", ".join(agent["capabilities"])), key=agent["id"])
+                    escape(", ".join(agent["capabilities"])), runtime.get("state", "external"),
+                    escape(runtime.get("model") or "tool default"), key=agent["id"])
             for memory in data["memories"]:
                 self.query_one("#memories", DataTable).add_row(str(memory["version"]), escape(memory["title"]),
                     escape(", ".join(memory["tags"])), escape(name(memory["author_id"])), key=memory["id"])

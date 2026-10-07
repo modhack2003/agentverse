@@ -14,7 +14,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from .mcp_bridge import create_mcp
 from .models import (
     AgentCreate, Heartbeat, MemoryWrite, MessageCreate, PlanFinish, ProjectCreate, ProjectUpdate,
-    ReleaseTask, ReviewCreate, TaskCreate, TaskEdit, WorkSubmit,
+    NodeCreate, NodePoll, NodeRegister, ReleaseTask, ReviewCreate, RuntimeConfig, RuntimeReport,
+    TaskCreate, TaskEdit, WorkSubmit,
 )
 from .store import Store
 
@@ -55,6 +56,9 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
 
     def principal(authorization: str | None = Header(default=None)):
         return store.authenticate(authorization)
+
+    def node_identity(authorization: str | None = Header(default=None)):
+        return store.runtimes.authenticate_node(authorization)
 
     @app.middleware("http")
     async def protect_mcp(request, call_next):
@@ -101,6 +105,42 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     @app.delete("/api/projects/{project_id}/agents/{agent_id}")
     def revoke_agent(project_id: str, agent_id: str, p=Depends(principal)):
         return store.revoke_agent(p, project_id, agent_id)
+
+    @app.get("/api/projects/{project_id}/nodes")
+    def nodes(project_id: str, p=Depends(principal)):
+        return store.runtimes.nodes(p, project_id)
+
+    @app.post("/api/projects/{project_id}/nodes", status_code=201)
+    def create_node(project_id: str, data: NodeCreate, p=Depends(principal)):
+        return store.runtimes.add_node(p, project_id, data)
+
+    @app.put("/api/projects/{project_id}/agents/{agent_id}/runtime")
+    def configure_runtime(project_id: str, agent_id: str, data: RuntimeConfig, p=Depends(principal)):
+        return store.runtimes.configure(p, project_id, agent_id, data)
+
+    @app.post("/api/projects/{project_id}/agents/{agent_id}/launch")
+    def launch_runtime(project_id: str, agent_id: str, p=Depends(principal)):
+        return store.runtimes.launch(p, project_id, agent_id)
+
+    @app.post("/api/projects/{project_id}/agents/{agent_id}/stop")
+    def stop_runtime(project_id: str, agent_id: str, p=Depends(principal)):
+        return store.runtimes.stop(p, project_id, agent_id)
+
+    @app.post("/api/nodes/me/register")
+    def register_node(data: NodeRegister, node=Depends(node_identity)):
+        return store.runtimes.register(node, data)
+
+    @app.post("/api/nodes/me/poll")
+    def poll_node(data: NodePoll, node=Depends(node_identity)):
+        return store.runtimes.poll(node, data)
+
+    @app.post("/api/nodes/me/report")
+    def report_node(data: RuntimeReport, node=Depends(node_identity)):
+        return store.runtimes.report(node, data)
+
+    @app.post("/api/nodes/me/disconnect")
+    def disconnect_node(data: NodePoll, node=Depends(node_identity)):
+        return store.runtimes.disconnect(node, data)
 
     @app.post("/api/agents/heartbeat")
     def heartbeat(data: Heartbeat, p=Depends(principal)):

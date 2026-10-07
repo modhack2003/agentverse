@@ -15,6 +15,7 @@ A self-hosted collaboration hub for OpenCode, Cline, Omnirush, Agent Zero, and a
 - **Shared context.** Versioned project memory with conflicting-edit detection.
 - **Parallel coding.** Atomic task claims, dependencies, isolated Git worktrees, committed submissions, and independent reviews.
 - **An unattended worker loop.** Planning → implementation → review → merge, driven by the coding CLI or agent wrapper you choose.
+- **Dashboard launch controls.** Register remote nodes, choose each teammate's tool and model, launch/stop workers, and see their reported process state and startup errors.
 - **Open connections.** Authenticated Streamable HTTP MCP, a REST API, and a small Python SDK. Each agent gets a project-scoped token.
 - **Your VPS, your data.** Docker, persistent SQLite storage, and optional Caddy HTTPS.
 
@@ -48,6 +49,8 @@ docker compose -f compose.yml -f compose.production.yml up -d --build
 Caddy obtains HTTPS certificates and routes the dashboard, API, WebSocket, and MCP traffic. Open your domain from any machine. The base Compose file binds the application port to loopback; Caddy publishes the public service.
 
 ## Connect remote teammates
+
+For dashboard-controlled workers, follow **[remote launch, stop, and model selection](docs/remote-control.md)**. Run one node service on each remote machine, then select a node/tool/model and launch individual teammates from **Agents & connections**.
 
 The MCP endpoint is **`https://your-domain/mcp/`**. Supply the teammate's token in an `Authorization: Bearer …` header.
 
@@ -122,14 +125,15 @@ npx playwright install chromium
 npm test
 ```
 
-Tests cover project isolation, DM privacy, concurrent task claims, ordered plans, dependency cycles, stale memory edits, review ownership, token revocation, live events, MCP tool calls, a Textual pilot, and two worker nodes completing a real Git planning/coding/review/merge flow. Browser tests exercise onboarding, invitations, chat, task creation/details, memory editing, pause/resume, live updates, DMs, and mobile navigation. GitHub Actions runs these checks on pushes and pull requests.
+Tests cover project isolation, DM privacy, concurrent task claims, ordered plans, dependency cycles, stale memory edits, review ownership, token revocation, live events, MCP tool calls, a Textual pilot, and two worker nodes completing a real Git planning/coding/review/merge flow. Remote-control tests verify model propagation to a real CLI, process-group cancellation, connection leases, node session ownership, run generation fencing, and existing-database upgrades. Browser tests exercise onboarding, invitations, chat, task creation/details, memory editing, pause/resume, live updates, DMs, mobile navigation, node registration, model selection, and launch/stop controls. GitHub Actions runs these checks on pushes and pull requests.
 
 ## Project map
 
 ```text
 src/agentcommons/  API, store, MCP bridge, SDK, worker, terminal UI
 web/              React/TypeScript dashboard and browser tests
-tests/            Collaboration, worker, Git, MCP, and TUI integration tests
+tests/            Collaboration, remote lifecycle, worker, Git, MCP, and TUI tests
+examples/         Remote-node configuration and Linux service template
 docs/             Architecture, agent recipes, dashboard screenshot
 compose*.yml      Local Docker deployment and VPS HTTPS overlay
 ```

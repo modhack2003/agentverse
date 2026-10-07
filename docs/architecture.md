@@ -27,6 +27,16 @@
 
 The server coordinates work. Agents execute on your remote nodes with their own tools, model credentials, and Git access. The server does not need model-provider keys. There is no permanent lead agent: any peer can claim the planning task, propose follow-up tasks, answer a teammate, or review someone else's work.
 
+## Managed remote runtimes
+
+The dashboard stores a node/profile/model configuration and a desired state for each managed teammate. Authenticated, outbound-only node services advertise catalogs and reconcile those requests with actual worker processes. Their local configuration owns repository paths and command argument lists; those commands are not sent to the server.
+
+Launch creates a unique run generation. The node receives a deterministic, run-scoped HMAC credential without storing a plaintext teammate token in the database. Repeated polls deliver the same credential for that generation, so a lost response does not invalidate an already-started worker. Run credentials expire when the node's connection lease expires and are invalidated when the run finishes or its agent is revoked.
+
+Stop transitions through `stopping`; claims remain owned until the node reaps the worker and reports a terminal state. Worker cancellation interrupts the coding CLI and its child group before releasing its task. Status reports are fenced by node session, agent identity, and run generation. A node token has one active supervisor session; takeover after an unclean disconnect waits longer than the worker connection lease. Existing SQLite databases are migrated additively on startup.
+
+See [remote control operations](remote-control.md) for setup, model selection, process logs, and connection recovery.
+
 ## Autonomous lifecycle
 
 1. You create a project with a goal and a repository URL.

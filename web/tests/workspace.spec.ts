@@ -9,7 +9,7 @@ test('owner creates a project, connects a teammate, chats, manages tasks and mem
   await page.goto('/')
   await page.getByLabel('Workspace access token').fill(token)
   await page.getByRole('button', { name: 'Enter your workspace' }).click()
-  await page.getByRole('button', { name: 'Create your first project' }).click()
+  await page.getByRole('button', { name: 'Create project', exact: true }).click()
   await page.getByLabel('Project name', { exact: true }).fill('Orbital workspace')
   await page.getByLabel('The goal', { exact: true }).fill('Build a beautiful launch site for our next big idea.')
   await page.getByLabel('Git repository URL').fill('https://github.com/example/orbital')

@@ -5,9 +5,11 @@ import {
   ChevronDown, ChevronRight, CircleDot, Code2, Copy, GitBranch, GitPullRequest,
   Globe, Hash, LayoutDashboard, ListTodo, LoaderCircle, LockKeyhole, LogOut, Menu,
   MessageSquare, Pause, Play, Plus, Radio, Search, Send, Sparkles,
-  Terminal, Users, X, Zap,
+  Terminal, Users, Zap,
 } from 'lucide-react'
 import { api } from './api'
+import Modal from './Dialog'
+import RemoteAgents from './RemoteAgents'
 import type { Agent, Memory, Project, Snapshot, Task } from './types'
 
 const sections = [
@@ -41,31 +43,6 @@ function Avatar({ agent, human = false, small = false }: { agent?: Agent; human?
 function Empty({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
   return <div className="empty-state">{icon}<h3>{title}</h3><p>{children}</p></div>
 }
-function Modal({ title, description, close, children }: { title: string; description?: string; close: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null
-    const focusable = () => Array.from(ref.current?.querySelectorAll<HTMLElement>('button,input,textarea,select,a[href],[tabindex="0"]') || [])
-    focusable()[0]?.focus()
-    const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-      if (event.key === 'Tab') {
-        const items = focusable(), first = items[0], last = items.at(-1)
-        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
-        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
-      }
-    }
-    document.addEventListener('keydown', key)
-    return () => { document.removeEventListener('keydown', key); previous?.focus() }
-  }, [close])
-  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) close() }}>
-    <div className="modal" ref={ref} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div className="modal-heading"><div><h2 id="modal-title">{title}</h2>{description && <p>{description}</p>}</div><button className="icon-button" onClick={close} aria-label="Close dialog"><X size={20} /></button></div>
-      {children}
-    </div>
-  </div>
-}
-
 function Login({ onLogin }: { onLogin: (token: string) => void }) {
   const [token, setToken] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   async function submit(e: FormEvent) {
@@ -171,7 +148,7 @@ export default function App() {
   }, [token, projectId, reload])
   useEffect(() => { if (!toast) return; const timer = setTimeout(() => setToast(''), 3500); return () => clearTimeout(timer) }, [toast])
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); if (projectId) { setFormError(''); setDialog('task') } } }
+    const handler = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); if (projectId && !document.querySelector('[role="dialog"]')) { setFormError(''); setDialog('task') } } }
     document.addEventListener('keydown', handler); return () => document.removeEventListener('keydown', handler)
   }, [projectId])
 
@@ -215,7 +192,7 @@ export default function App() {
   const filtered = tasks.filter(t => `${t.title} ${t.description}`.toLowerCase().includes(search.toLowerCase()))
   const project = snapshot?.project || projects.find(p => p.id === projectId)
   const selectedTask = tasks.find(t => t.id === task?.id) || task
-  const actorName = (id: string) => id === 'human' ? 'You' : agents.find(a => a.id === id)?.name || 'Teammate'
+  const actorName = (id: string) => id === 'human' ? 'You' : agents.find(a => a.id === id)?.name || snapshot?.nodes.find(node => node.id === id)?.name || 'Teammate'
   const mcpConfig = connection ? JSON.stringify({ mcpServers: { agentcommons: { url: `${location.origin}/mcp/`, headers: { Authorization: `Bearer ${connection.token}` } } } }, null, 2) : ''
 
   return <div className="app-shell">
@@ -253,7 +230,7 @@ export default function App() {
           {section === 'chat' && <Chat snapshot={snapshot} token={token} reload={reload} full initialRecipient={dmRecipient} />}
           {section === 'memory' && <><div className="board-toolbar"><span><BookOpen size={16} />{snapshot.memories.length} shared notes</span><div className="search-field"><Search size={15} /><input aria-label="Search memory" placeholder="Search notes and tags…" value={memorySearch} onChange={e => setMemorySearch(e.target.value)} /></div></div><div className="memory-grid">{snapshot.memories.filter(note => `${note.title} ${note.content} ${note.tags.join(' ')}`.toLowerCase().includes(memorySearch.toLowerCase())).map(note => <button key={note.id} className="panel memory-card" onClick={() => { setMemory(note); open('memory') }}><div className="memory-top"><span className="memory-icon"><BookOpen size={19} /></span><span>v{note.version}</span></div><h2>{note.title}</h2><p>{note.content}</p><div className="memory-tags">{note.tags.map(tag => <span key={tag}>{tag}</span>)}</div><div className="memory-footer">{actorName(note.author_id)}<span>{new Date(note.updated_at * 1000).toLocaleDateString()}</span></div></button>)}{snapshot.memories.length === 0 && <div className="panel spanning"><Empty icon={<BookOpen size={30} />} title="Build a shared understanding">Save decisions, architecture notes, and handoffs. Your agents can read and update them through MCP or the API.</Empty></div>}{snapshot.memories.length > 0 && !snapshot.memories.some(note => `${note.title} ${note.content} ${note.tags.join(' ')}`.toLowerCase().includes(memorySearch.toLowerCase())) && <div className="panel spanning"><Empty icon={<Search size={28} />} title="No matching memories">Try a different phrase, title, or tag.</Empty></div>}</div></>}
           {section === 'reviews' && <div className="review-list">{tasks.filter(t => t.status === 'review').map(t => <button className="panel review-card" key={t.id} onClick={() => detail(t)}><span className="review-icon"><GitPullRequest size={23} /></span><div><span className="eyebrow">READY FOR A SECOND SET OF EYES</span><h2>{t.title}</h2><p>{t.summary}</p><span className="branch-label"><GitBranch size={13} />{t.branch} · {t.commit_sha?.slice(0, 8)}</span></div><span className="badge amber">{t.reviewer_id ? `Reviewing: ${actorName(t.reviewer_id)}` : 'Waiting for a peer'}</span><ChevronRight size={20} /></button>)}{inReview === 0 && <div className="panel"><Empty icon={<GitPullRequest size={30} />} title="All caught up">Committed work appears here for an independent teammate to review.</Empty></div>}{snapshot.reviews.length > 0 && <><h2 className="history-heading">Review history</h2>{snapshot.reviews.map(review => <div className="panel review-history" key={review.id}><div><span className={`badge ${review.decision === 'approve' ? 'green' : 'amber'}`}>{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</span><strong>{tasks.find(t => t.id === review.task_id)?.title}</strong><span className="subtle">by {actorName(review.reviewer_id)}</span></div><p>{review.comment}</p><code>{review.commit_sha.slice(0, 12)}</code></div>)}</>}</div>}
-          {section === 'agents' && <><div className="integration-banner"><div className="integration-symbol"><Globe size={25} /></div><div><h2>Every agent is welcome.</h2><p>Connect through the remote MCP endpoint or run a worker on any machine. Every teammate gets its own project-scoped token.</p></div><span className="badge purple">Open protocol</span></div><div className="agents-grid">{agents.map(agent => <section className="panel agent-card" key={agent.id}><div className="agent-card-top"><Avatar agent={agent} /><span className={`badge ${agent.online ? 'green' : 'muted'}`}><span className={`status-dot ${agent.online ? 'green' : 'muted'}`} />{agent.online ? agent.status : 'Offline'}</span></div><h2>{agent.name}</h2><p>{agent.kind} · Remote teammate</p><div className="memory-tags">{agent.capabilities.map(cap => <span key={cap}>{cap}</span>)}</div><div className="agent-card-bottom"><button className="text-button" onClick={() => { setDmRecipient(agent.id); setSection('chat') }}><MessageSquare size={14} /> Message</button>{admin && <button className="text-button danger" onClick={async () => { if (confirm(`Revoke ${agent.name}'s token and release their active claims?`)) { try { await mutate(`/projects/${projectId}/agents/${agent.id}`, undefined, 'DELETE'); setToast('Agent token revoked.') } catch { setError('Could not revoke agent access.') } } }}>Revoke access</button>}</div></section>)}{admin && <button className="agent-add-card" onClick={() => open('agent')}><span><Plus size={25} /></span><h3>Add a teammate</h3><p>OpenCode, Cline, Omnirush,<br />Agent Zero, or your own agent.</p></button>}</div><section className="panel endpoint-panel"><div><Terminal size={19} /><h2>Remote MCP endpoint</h2></div><code>{location.origin}/mcp/</code><button className="icon-button" aria-label="Copy MCP endpoint" onClick={() => void copy(`${location.origin}/mcp/`)}><Copy size={16} /></button></section></>}
+          {section === 'agents' && <RemoteAgents snapshot={snapshot} token={token} reload={reload} avatar={agent => <Avatar agent={agent} />} invite={() => open('agent')} message={agent => { setDmRecipient(agent.id); setSection('chat') }} />}
         </>}
         <footer className="page-footer"><span><span className="status-dot green" /> Built for agents. Designed for people.</span><span>AgentCommons <span className="footer-version">v0.1</span></span></footer>
       </main>

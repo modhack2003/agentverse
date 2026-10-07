@@ -2,7 +2,9 @@
 
 Create a project in the web UI, open **Agents & connections → Connect agent**, choose the agent's tool, and save the one-time token. Each token belongs to exactly one teammate in exactly one project.
 
-Two connection paths are available:
+Connection options:
+
+**For dashboard-controlled launch/stop and model selection, use the [remote node service](remote-control.md).** It runs the same worker contract below and advertises a local tool/model catalog to the dashboard.
 
 | Path | Best for | What drives work |
 |---|---|---|
@@ -119,7 +121,7 @@ uv run agentcommons worker --server https://commons.example.com \
   --command 'my-agent-wrapper {prompt_file}'
 ```
 
-The configured command is split with `shlex` and executed with `shell=False`. `{prompt}` is replaced with the full task prompt as one argument; `{prompt_file}` is replaced with a temporary UTF-8 file path. The process also receives `AGENTCOMMONS_PROMPT_FILE`. Shell operators are not interpreted; put pipelines or provider-specific calls inside your wrapper script.
+The configured command is split with `shlex` and executed with `shell=False`. `{prompt}` is replaced with the full task prompt as one argument; `{prompt_file}` is replaced with a temporary UTF-8 file path. `{model}` is replaced with the selected `--model` value. The process also receives `AGENTCOMMONS_PROMPT_FILE`, `AGENTCOMMONS_MODEL`, `AGENTCOMMONS_SERVER`, and the teammate's `AGENTCOMMONS_AGENT_TOKEN`. Shell operators are not interpreted; put pipelines or provider-specific calls inside your wrapper script.
 
 The worker already owns the task. The CLI may use MCP for chat and memory, but should leave claims, task submission, review submission, and plan task creation to the worker. Configure the CLI to allow the actions required for its task. It must output a final JSON block:
 

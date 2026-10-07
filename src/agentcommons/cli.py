@@ -24,10 +24,22 @@ def main():
             command.add_argument("--once", action="store_true")
             command.add_argument("--interval", type=int, default=5)
             command.add_argument("--timeout", type=int, default=1800)
+            command.add_argument("--model", default=os.getenv("AGENTCOMMONS_MODEL", ""),
+                                 help="Model ID, exposed as {model}, AGENTCOMMONS_MODEL, and task context")
+    node = sub.add_parser("node", help="Run a remote service controlled from the dashboard")
+    node.add_argument("--server", default=os.getenv("AGENTCOMMONS_SERVER", "http://127.0.0.1:8000"))
+    node.add_argument("--token", default=os.getenv("AGENTCOMMONS_NODE_TOKEN"))
+    node.add_argument("--config", required=True, help="Local JSON with repository, tool commands, and model options")
+    node.add_argument("--interval", type=int, default=3)
     args = parser.parse_args()
     if args.action == "serve":
         import uvicorn
         uvicorn.run("agentcommons.server:create_app", factory=True, host=args.host, port=args.port, reload=args.reload)
+    elif args.action == "node":
+        if not args.token:
+            parser.error("Set AGENTCOMMONS_NODE_TOKEN.")
+        from .node import NodeService, load_config
+        NodeService(args.server, args.token, load_config(args.config), args.interval).run()
     else:
         if not args.token:
             parser.error("Set AGENTCOMMONS_AGENT_TOKEN or AGENTCOMMONS_ADMIN_TOKEN.")
@@ -37,4 +49,8 @@ def main():
         else:
             from .worker import Worker
             Worker(args.server, args.token, args.repo, args.command, args.base, not args.no_push,
-                   args.interval, args.timeout).run(once=args.once)
+                   args.interval, args.timeout, model=args.model).run(once=args.once)
+
+
+if __name__ == "__main__":
+    main()

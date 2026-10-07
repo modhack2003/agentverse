@@ -1,0 +1,20 @@
+{
+  "repo": "/srv/projects/your-project",
+  "max_workers": 4,
+  "log_dir": "~/.local/state/agentcommons/logs",
+  "profiles": [
+    {
+      "id": "opencode",
+      "name": "OpenCode CLI",
+      "kind": "opencode",
+      "argv": ["opencode", "run", "--model", "{model}", "{prompt}"],
+      "models": [
+        {"id": "your-provider/your-coding-model", "name": "Fast coding model"},
+        {"id": "your-provider/your-reasoning-model", "name": "Deep reasoning model"}
+      ],
+      "base": "main",
+      "push": true,
+      "timeout": 1800
+    }
+  ]
+}

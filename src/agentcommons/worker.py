@@ -8,10 +8,17 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 
+import httpx
+
 from .client import Client
+
+
+class WorkerStopped(BaseException):
+    """A managed stop: interrupt work, terminate child groups, and release the claim."""
 
 
 def result_json(text):
@@ -27,28 +34,45 @@ def result_json(text):
     raise RuntimeError("Agent must return a final ```agentcommons JSON block. See docs/agents.md.")
 
 
-def execute_agent(command, prompt, directory, timeout, extra_env=None):
+def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None, model=""):
     with tempfile.TemporaryDirectory(prefix="agentcommons-") as scratch:
         prompt_file = Path(scratch) / "prompt.txt"
         prompt_file.write_text(prompt)
-        argv = [arg.replace("{prompt_file}", str(prompt_file)).replace("{prompt}", prompt)
+        argv = [arg.replace("{model}", model).replace("{prompt_file}", str(prompt_file)).replace("{prompt}", prompt)
                 for arg in shlex.split(command)]
         if not argv:
             raise RuntimeError("Configure a nonempty worker command.")
         env = {**os.environ, **(extra_env or {}), "AGENTCOMMONS_PROMPT_FILE": str(prompt_file), "NO_COLOR": "1"}
         # The child gets its agent token if configured, but never an inherited admin token.
         env.pop("AGENTCOMMONS_ADMIN_TOKEN", None)
+        env.pop("AGENTCOMMONS_NODE_TOKEN", None)
         with (Path(scratch) / "output.log").open("w+") as log:
             process = subprocess.Popen(argv, cwd=directory, env=env, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
-                process.wait(timeout=timeout)
+                deadline = time.monotonic() + timeout
+                while process.poll() is None:
+                    if stop and stop.is_set():
+                        raise WorkerStopped()
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+                    try:
+                        process.wait(timeout=min(0.25, remaining))
+                    except subprocess.TimeoutExpired:
+                        continue
             except BaseException:
-                os.killpg(process.pid, signal.SIGTERM)
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
                 try:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
                     process.wait()
                 raise
             log.seek(0, 2)
@@ -60,12 +84,13 @@ def execute_agent(command, prompt, directory, timeout, extra_env=None):
 
 
 class Worker:
-    def __init__(self, server, token, repo, command, base="main", push=True, interval=5, timeout=1800):
+    def __init__(self, server, token, repo, command, base="main", push=True, interval=5, timeout=1800, model=""):
         self.client = Client(server, token)
         self.server, self.token = server, token
         self.repo = Path(repo).resolve()
         self.command, self.base, self.push = command, base, push
         self.interval, self.timeout = interval, timeout
+        self.model = model
         identity = self.client.get("/api/me")
         if identity["admin"]:
             raise RuntimeError("Workers require a project-scoped agent token, not an admin token.")
@@ -87,7 +112,7 @@ class Worker:
             while not self.stop.is_set():
                 try:
                     response = http.post("/api/agents/heartbeat", json={"status": self.state})
-                    if response.status_code == 401:
+                    if response.status_code == 401 or response.status_code == 200 and response.json().get("stop_requested"):
                         self.stop.set()
                 except Exception:
                     pass
@@ -96,6 +121,7 @@ class Worker:
     def context(self, snapshot, task, review=False):
         context = {
             "project": snapshot["project"], "your_agent_id": self.agent_id,
+            "selected_model": self.model or "tool default",
             "task": task, "team": snapshot["agents"], "memory": snapshot["memories"],
             "recent_messages": snapshot["messages"][-30:],
             "previous_reviews": [r for r in snapshot["reviews"] if r["task_id"] == task["id"]],
@@ -173,7 +199,8 @@ class Worker:
     def perform(self, snapshot, task, review=False):
         directory, branch, before = self.worktree(task, review)
         result = execute_agent(self.command, self.context(snapshot, task, review), directory, self.timeout,
-                               {"AGENTCOMMONS_AGENT_TOKEN": self.token, "AGENTCOMMONS_SERVER": self.server})
+                               {"AGENTCOMMONS_AGENT_TOKEN": self.token, "AGENTCOMMONS_SERVER": self.server,
+                                "AGENTCOMMONS_MODEL": self.model}, self.stop, self.model)
         if review:
             if self.git("status", "--porcelain", cwd=directory) or self.git("rev-parse", "HEAD", cwd=directory) != before:
                 raise RuntimeError("Reviewer modified the worktree; refusing to record the review.")
@@ -212,6 +239,11 @@ class Worker:
         self.git("worktree", "remove", str(directory))
 
     def run(self, once=False):
+        previous = None
+        if threading.current_thread() is threading.main_thread():
+            def interrupted(*_):
+                raise WorkerStopped()
+            previous = signal.signal(signal.SIGTERM, interrupted)
         pulse = threading.Thread(target=self.pulse, daemon=True)
         pulse.start()
         print(f"Connected as {self.agent_id}. Waiting for teammates and tasks.", flush=True)
@@ -258,10 +290,17 @@ class Worker:
                     self.state = "idle"
                 if once:
                     return
+        except WorkerStopped:
+            pass
         finally:
             self.stop.set()
             pulse.join(timeout=3)
             try:
                 self.client.post("/api/agents/heartbeat", {"status": "offline"})
+            except (RuntimeError, httpx.HTTPError):
+                # A revoked or unreachable session cannot send a final heartbeat.
+                pass
             finally:
                 self.client.close()
+                if previous is not None:
+                    signal.signal(signal.SIGTERM, previous)

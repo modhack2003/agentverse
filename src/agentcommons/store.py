@@ -14,6 +14,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 from .models import AgentCreate, MemoryWrite, MessageCreate, PlanFinish, ProjectCreate, TaskCreate
+from .orchestration import ACTIVE_STATES, RuntimeRegistry
 
 
 def uid(prefix: str) -> str:
@@ -28,6 +29,7 @@ def fail(code: int, detail: str):
 class Principal:
     agent_id: str | None = None
     project_id: str | None = None
+    run_id: str | None = None
 
     @property
     def actor(self):
@@ -96,6 +98,9 @@ class Store:
             CREATE INDEX IF NOT EXISTS tasks_project ON tasks(project_id, status);
             CREATE INDEX IF NOT EXISTS messages_project ON messages(project_id, created_at);
         """)
+        if "revoked" not in {row["name"] for row in self.db.execute("PRAGMA table_info(agents)")}:
+            self.db.execute("ALTER TABLE agents ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
+        self.runtimes = RuntimeRegistry(self, admin_token)
 
     def close(self):
         with self.lock:
@@ -127,7 +132,10 @@ class Store:
         digest = hashlib.sha256(authorization[7:].encode()).hexdigest()
         if secrets.compare_digest(digest, self.admin_hash):
             return Principal()
-        agent = self.one("SELECT id, project_id FROM agents WHERE token_hash=?", (digest,))
+        managed = self.runtimes.authenticate_runtime(authorization[7:])
+        if managed:
+            return Principal(*managed)
+        agent = self.one("SELECT id, project_id FROM agents WHERE token_hash=? AND revoked=0", (digest,))
         if not agent:
             fail(401, "Invalid or revoked token.")
         return Principal(agent["id"], agent["project_id"])
@@ -207,18 +215,24 @@ class Store:
         row.pop("token_hash")
         row["capabilities"] = json.loads(row["capabilities"])
         row["online"] = row["status"] != "offline" and time.time() - row["last_seen"] < 90
+        row["revoked"] = bool(row["revoked"])
+        row["runtime"] = self.runtimes.runtime(agent_id)
         return row
 
     def revoke_agent(self, principal, project_id, agent_id):
         self.admin_only(principal)
         with self.transaction():
             self.agent(principal, project_id, agent_id)
-            self.db.execute("UPDATE agents SET token_hash=?,status='offline' WHERE id=?",
-                            (hashlib.sha256(secrets.token_bytes(32)).hexdigest(), agent_id))
-            self.db.execute(
-                "UPDATE tasks SET status='backlog',assignee_id=NULL,updated_at=? "
-                "WHERE assignee_id=? AND status='in_progress'", (time.time(), agent_id))
-            self.db.execute("UPDATE tasks SET reviewer_id=NULL WHERE reviewer_id=?", (agent_id,))
+            self.db.execute("UPDATE agents SET token_hash=?,status='offline',revoked=1 WHERE id=?",
+                             (hashlib.sha256(secrets.token_bytes(32)).hexdigest(), agent_id))
+            runtime = self.runtimes.runtime(agent_id)
+            if runtime and runtime["state"] in ACTIVE_STATES:
+                self.runtimes.stop_locked(principal, runtime)
+            else:
+                self.db.execute(
+                    "UPDATE tasks SET status='backlog',assignee_id=NULL,updated_at=? "
+                    "WHERE assignee_id=? AND status='in_progress'", (time.time(), agent_id))
+                self.db.execute("UPDATE tasks SET reviewer_id=NULL WHERE reviewer_id=?", (agent_id,))
             self.event(project_id, "agent.revoked", principal, agent_id, "Agent access revoked")
         return {"ok": True}
 
@@ -228,7 +242,9 @@ class Store:
         with self.transaction():
             self.db.execute("UPDATE agents SET last_seen=?,status=? WHERE id=?",
                             (time.time(), status, principal.agent_id))
-        return {"ok": True, "agent_id": principal.agent_id, "project_id": principal.project_id}
+        runtime = self.runtimes.runtime(principal.agent_id) if principal.run_id else None
+        return {"ok": True, "agent_id": principal.agent_id, "project_id": principal.project_id,
+                "stop_requested": bool(runtime and runtime["desired_state"] == "stopped")}
 
     def message(self, principal, project_id, data: MessageCreate):
         with self.transaction():
@@ -333,6 +349,7 @@ class Store:
             fail(403, "Only an agent can claim a task.")
         with self.transaction():
             self.project(principal, project_id, active=True)
+            self.runtimes.can_claim(principal)
             task = self.task(principal, project_id, task_id)
             if task["status"] != "backlog" or task["blocked"]:
                 fail(409, "This task is already claimed or has unfinished dependencies.")
@@ -367,6 +384,7 @@ class Store:
     def finish_plan(self, principal, project_id, task_id, data: PlanFinish):
         with self.transaction():
             self.project(principal, project_id, active=True)
+            self.runtimes.can_claim(principal)
             task = self.owned_task(principal, project_id, task_id, "in_progress")
             if task["kind"] != "planning":
                 fail(422, "This is not a planning task.")
@@ -385,6 +403,7 @@ class Store:
     def submit_work(self, principal, project_id, task_id, data):
         with self.transaction():
             self.project(principal, project_id, active=True)
+            self.runtimes.can_claim(principal)
             task = self.owned_task(principal, project_id, task_id, "in_progress")
             if task["kind"] != "implementation":
                 fail(422, "Finish a planning task with a team plan.")
@@ -401,6 +420,7 @@ class Store:
             fail(403, "Only an agent can claim a peer review.")
         with self.transaction():
             self.project(principal, project_id, active=True)
+            self.runtimes.can_claim(principal)
             task = self.task(principal, project_id, task_id)
             if task["assignee_id"] == principal.agent_id:
                 fail(403, "Ask a teammate to review your work.")
@@ -427,6 +447,7 @@ class Store:
     def review_work(self, principal, project_id, task_id, data):
         with self.transaction():
             self.project(principal, project_id, active=True)
+            self.runtimes.can_claim(principal)
             task = self.task(principal, project_id, task_id)
             if principal.admin or task["reviewer_id"] != principal.agent_id:
                 fail(403, "Claim this peer review before submitting a decision.")
@@ -492,7 +513,8 @@ class Store:
                 "(recipient_id IS NULL OR recipient_id=? OR actor_id=?) ORDER BY id DESC LIMIT 50",
                 (project_id, principal.actor, principal.actor))))
             return {
-                "project": project, "agents": agents, "tasks": self.tasks(principal, project_id),
+                "project": project, "agents": agents, "nodes": self.runtimes.nodes(principal, project_id),
+                "tasks": self.tasks(principal, project_id),
                 "messages": self.messages(principal, project_id), "memories": self.memories(principal, project_id),
                 "reviews": self.all("SELECT * FROM reviews WHERE project_id=? ORDER BY created_at DESC",
                                     (project_id,)),

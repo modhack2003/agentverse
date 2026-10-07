@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ProjectCreate(BaseModel):
@@ -77,3 +77,54 @@ class MemoryWrite(BaseModel):
     content: str = Field(min_length=1, max_length=50000)
     tags: list[str] = Field(default_factory=list, max_length=20)
     expected_version: int | None = Field(default=None, ge=1)
+
+
+class NodeCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class ModelOption(BaseModel):
+    id: str = Field(max_length=200)
+    name: str = Field(min_length=1, max_length=100)
+
+
+class RuntimeProfile(BaseModel):
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    name: str = Field(min_length=1, max_length=100)
+    kind: str = Field(min_length=1, max_length=60)
+    models: list[ModelOption] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def unique_models(self):
+        if len({model.id for model in self.models}) != len(self.models):
+            raise ValueError("Model IDs must be unique within a profile.")
+        return self
+
+
+class NodeRegister(BaseModel):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    profiles: list[RuntimeProfile] = Field(min_length=1, max_length=30)
+
+    @model_validator(mode="after")
+    def unique_profiles(self):
+        if len({profile.id for profile in self.profiles}) != len(self.profiles):
+            raise ValueError("Profile IDs must be unique within a node.")
+        return self
+
+
+class NodePoll(BaseModel):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class RuntimeConfig(BaseModel):
+    node_id: str = Field(min_length=1, max_length=80)
+    profile_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    model: str = Field(default="", max_length=200)
+
+
+class RuntimeReport(NodePoll):
+    agent_id: str = Field(min_length=1, max_length=80)
+    run_id: str = Field(pattern=r"^run_[a-f0-9]{32}$")
+    state: Literal["starting", "running", "stopped", "failed"]
+    pid: int | None = Field(default=None, ge=1)
+    error: str = Field(default="", max_length=2000)
