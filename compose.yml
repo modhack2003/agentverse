@@ -1,0 +1,18 @@
+services:
+  commons:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      AGENTCOMMONS_ADMIN_TOKEN: ${AGENTCOMMONS_ADMIN_TOKEN:?Set a long random admin token in .env}
+      AGENTCOMMONS_DB: /data/agentcommons.db
+      AGENTCOMMONS_ORIGINS: ${AGENTCOMMONS_ORIGINS:-}
+      AGENTCOMMONS_DOMAIN: ${AGENTCOMMONS_DOMAIN:-}
+      AGENTCOMMONS_MCP_HOSTS: ${AGENTCOMMONS_MCP_HOSTS:-}
+    volumes:
+      - commons-data:/data
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  commons-data:
