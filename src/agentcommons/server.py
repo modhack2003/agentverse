@@ -14,7 +14,7 @@ from .mcp_bridge import create_mcp
 from .models import (
     AgentCreate, Heartbeat, MemoryWrite, MessageCreate, PlanFinish, ProjectCreate, ProjectUpdate,
     NodeCreate, NodePoll, NodeRegister, ReleaseTask, ReviewCreate, RuntimeConfig, RuntimeReport,
-    TaskCreate, TaskEdit, WorkSubmit,
+    TaskCreate, TaskEdit, WorkSubmit, LoginRequest,
 )
 from .store import Store
 from .config import PRODUCT, VERSION, PROTOCOL_VERSION, setting
@@ -83,7 +83,11 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
         return {"product": PRODUCT, "version": VERSION, "protocol_version": PROTOCOL_VERSION,
                 "connection_modes": ["managed_cli", "managed_api", "connected"],
                 "peer_transports": ["mcp", "http"], "mcp_path": "/mcp/",
-                "features": ["peer-discovery", "capabilities", "versioned-profiles", "settings-schema", "health", "help-requests"]}
+                 "features": ["peer-discovery", "capabilities", "versioned-profiles", "settings-schema", "health", "help-requests"]}
+
+    @app.post("/api/login")
+    def login(data: LoginRequest):
+        return store.admin_session(data.username, data.password)
 
     @app.get("/api/me")
     def me(p=Depends(principal)):

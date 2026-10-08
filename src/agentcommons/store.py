@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from .models import AgentCreate, MemoryWrite, MessageCreate, PlanFinish, ProjectCreate, TaskCreate
 from .orchestration import ACTIVE_STATES, RuntimeRegistry
 from .team import TeamRegistry
+from .config import setting
 
 
 def uid(prefix: str) -> str:
@@ -48,6 +49,7 @@ class Store:
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.admin_hash = hashlib.sha256(admin_token.encode()).hexdigest()
+        self.admin_sessions = {}
         self.lock = threading.RLock()
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None, timeout=15)
         self.db.row_factory = sqlite3.Row
@@ -131,10 +133,17 @@ class Store:
     def authenticate(self, authorization: str | None) -> Principal:
         if not authorization or not authorization.startswith("Bearer "):
             fail(401, "A bearer token is required.")
-        digest = hashlib.sha256(authorization[7:].encode()).hexdigest()
+        token = authorization[7:]
+        now = time.time()
+        expires = self.admin_sessions.get(token)
+        if expires:
+            if expires >= now:
+                return Principal()
+            self.admin_sessions.pop(token, None)
+        digest = hashlib.sha256(token.encode()).hexdigest()
         if secrets.compare_digest(digest, self.admin_hash):
             return Principal()
-        managed = self.runtimes.authenticate_runtime(authorization[7:])
+        managed = self.runtimes.authenticate_runtime(token)
         if managed:
             return Principal(*managed)
         agent = self.one("SELECT id, project_id FROM agents WHERE token_hash=? AND revoked=0", (digest,))
@@ -144,6 +153,15 @@ class Store:
         if runtime and runtime["state"] in ACTIVE_STATES:
             fail(401, "This identity has a managed run. Its worker uses a run-scoped token; connect other sessions as a separate teammate.")
         return Principal(agent["id"], agent["project_id"])
+
+    def admin_session(self, username, password):
+        configured_username = setting("ADMIN_USERNAME", "kali")
+        configured_password = setting("ADMIN_PASSWORD", "kali")
+        if not secrets.compare_digest(username, configured_username) or not secrets.compare_digest(password, configured_password):
+            fail(401, "Invalid user ID or password.")
+        token = f"web_{secrets.token_urlsafe(32)}"
+        self.admin_sessions[token] = time.time() + 86400
+        return {"token": token, "expires_in": 86400, "username": configured_username}
 
     def admin_only(self, principal):
         if not principal.admin:

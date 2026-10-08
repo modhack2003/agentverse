@@ -11,6 +11,11 @@ def tool_id(value):
     return {"agent zero": "agentzero", "agent-zero": "agentzero", "claude code": "claude", "claude-code": "claude"}.get(value, re.sub(r"[^a-z0-9_-]+", "-", value).strip("-")) or "custom"
 
 
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=200)
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     goal: str = Field(min_length=1, max_length=20000)

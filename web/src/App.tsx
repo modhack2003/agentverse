@@ -29,6 +29,17 @@ const statuses = [
   { id: 'review', label: 'Peer review', color: 'amber' },
   { id: 'done', label: 'Completed', color: 'green' },
 ] as const
+const agentTools = [
+  { value: 'opencode', label: 'OpenCode' },
+  { value: 'omnirush', label: 'Omnirush' },
+  { value: 'cline', label: 'Cline' },
+  { value: 'claude', label: 'Claude' },
+  { value: 'codex', label: 'Codex' },
+  { value: 'kiro', label: 'Kiro' },
+  { value: 'antigravity', label: 'Antigravity' },
+  { value: 'agentzero', label: 'Agent Zero' },
+  { value: 'custom', label: 'Other / custom tool' },
+]
 type Dialog = 'project' | 'task' | 'agent' | 'memory' | 'detail' | 'connect' | null
 
 function Brand({ small = false }: { small?: boolean }) {
@@ -47,16 +58,26 @@ function Empty({ icon, title, children }: { icon: ReactNode; title: string; chil
   return <div className="empty-state">{icon}<h3>{title}</h3><p>{children}</p></div>
 }
 function Login({ onLogin }: { onLogin: (token: string) => void }) {
+  const [username, setUsername] = useState('kali'), [password, setPassword] = useState('kali')
   const [token, setToken] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError('')
-    try { await api(token, '/me'); onLogin(token) } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+    try {
+      if (username || password) {
+        const result = await api<{ token: string }>('', '/login', 'POST', { username, password })
+        onLogin(result.token)
+      } else {
+        await api(token, '/me'); onLogin(token)
+      }
+    } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return <main className="login-shell"><div className="login-appearance"><ThemePicker /></div><div className="login-decoration"><span /><span /><span /></div>
     <div className="login-card"><Brand /><span className="eyebrow"><span className="status-dot green" /> A SHARED HOME FOR YOUR AGENTS</span>
       <h1>Great things happen<br />when agents <em>work together.</em></h1><p className="login-description">Bring your favorite agents into one workspace.<br />One goal. Shared context. A team that moves together.</p>
       <div className="login-agent-row">{['opencode', 'cline', 'omnirush', 'agentzero'].map(kind => <span key={kind} className={`avatar ${kind}`}><KindIcon kind={kind} /></span>)}<span>+ any agent</span></div>
-      <form onSubmit={submit}><label htmlFor="access-token">Workspace access token</label><div className="token-input"><LockKeyhole size={17} /><input id="access-token" type="password" autoComplete="off" placeholder="Paste your admin or agent token" value={token} onChange={e => setToken(e.target.value)} required /></div>
+      <form onSubmit={submit}><label htmlFor="user-id">User ID</label><div className="token-input"><LockKeyhole size={17} /><input id="user-id" type="text" autoComplete="username" placeholder="User ID" value={username} onChange={e => setUsername(e.target.value)} required /></div>
+        <label htmlFor="login-password">Password</label><div className="token-input"><LockKeyhole size={17} /><input id="login-password" type="password" autoComplete="current-password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required /></div>
+        <label className="legacy-login" htmlFor="access-token">Legacy access token <small>(agents and existing sessions)</small></label><div className="token-input"><LockKeyhole size={17} /><input id="access-token" aria-label="Workspace access token" type="password" autoComplete="off" placeholder="Optional bearer token" value={token} onChange={e => setToken(e.target.value)} /></div>
         {error && <p className="form-error" role="alert">{error}</p>}<button className="button primary full" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <>Enter your workspace <ArrowRight size={17} /></>}</button>
       </form><p className="login-footer"><Globe size={13} /> Self-hosted. Agent-neutral. Yours.</p>
     </div></main>
@@ -106,6 +127,7 @@ export default function App() {
   const [live, setLive] = useState(false), [mobileNav, setMobileNav] = useState(false), [search, setSearch] = useState(''), [dmRecipient, setDmRecipient] = useState('')
   const [memorySearch, setMemorySearch] = useState('')
   const [admin, setAdmin] = useState(false)
+  const [agentTool, setAgentTool] = useState('opencode')
   const activeProject = useRef(projectId); activeProject.current = projectId
   const close = useCallback(() => { setDialog(null); setFormError(''); setConnection(null) }, [])
 
@@ -157,7 +179,7 @@ export default function App() {
 
   function login(value: string) { writeStorage('agentverse-token', value, true); removeStorage('agentcommons-token', true); setToken(value); setError('') }
   function logout() { removeStorage('agentverse-token', true); removeStorage('agentcommons-token', true); setToken(''); setProjects([]); setSnapshot(null); setProjectId('') }
-  function open(mode: Dialog) { setFormError(''); setDialog(mode) }
+  function open(mode: Dialog) { setFormError(''); if (mode === 'agent') setAgentTool('opencode'); setDialog(mode) }
   function detail(value: Task) { setTask(value); open('detail') }
   async function mutate(path: string, body?: unknown, method = 'POST') {
     setBusy(true); setFormError('')
@@ -174,7 +196,7 @@ export default function App() {
       } else if (dialog === 'task') {
         await mutate(`/projects/${projectId}/tasks`, { title: field('title'), description: field('description'), priority: field('priority'), dependencies: form.getAll('dependencies'), required_capabilities: field('required_capabilities').split(',').map(s => s.trim()).filter(Boolean) }); setToast('Task added to the team board.'); close()
       } else if (dialog === 'agent') {
-        const result = await mutate(`/projects/${projectId}/agents`, { name: field('name'), kind: field('kind'), description: field('description'), limitations: field('limitations').split('\n').map(s => s.trim()).filter(Boolean), capabilities: field('capabilities').split(',').map(s => s.trim()).filter(Boolean) }) as { agent: Agent; token: string }
+        const result = await mutate(`/projects/${projectId}/agents`, { name: field('name'), kind: agentTool === 'custom' ? field('custom_kind') : agentTool, description: field('description'), limitations: field('limitations').split('\n').map(s => s.trim()).filter(Boolean), capabilities: field('capabilities').split(',').map(s => s.trim()).filter(Boolean) }) as { agent: Agent; token: string }
         setConnection(result); open('connect')
       } else if (dialog === 'memory') {
         await mutate(`/projects/${projectId}/memories${memory ? `/${memory.id}` : ''}`, { title: field('title'), content: field('content'), tags: field('tags').split(',').map(s => s.trim()).filter(Boolean), expected_version: memory?.version }, memory ? 'PUT' : 'POST'); setToast('Shared memory saved.'); close()
@@ -242,7 +264,7 @@ export default function App() {
       {['project', 'task', 'agent', 'memory'].includes(dialog) && <form onSubmit={submitForm} className="dialog-form">
         {dialog === 'project' && <><label>Project name<input name="name" placeholder="e.g. Build our next big idea" required maxLength={100} /></label><label>The goal<textarea name="goal" placeholder="What should your team accomplish?" required rows={4} maxLength={20000} /></label><label>Git repository URL <span className="optional">optional</span><input name="repo_url" placeholder="https://github.com/your-team/project" maxLength={2000} /></label><label className="checkbox-label"><input type="checkbox" name="auto_plan" defaultChecked /><span>Let the first available agent turn this goal into a team plan.</span></label></>}
         {dialog === 'task' && <><label>Task title<input name="title" required placeholder="A clear, focused next step" maxLength={200} /></label><label>Description & acceptance criteria<textarea name="description" rows={4} placeholder="What should be done, and how will the team know it works?" maxLength={20000} /></label><label>Priority<select name="priority" defaultValue="medium"><option value="low">Low — when there's room</option><option value="medium">Medium — normal priority</option><option value="high">High — pick up next</option></select></label><label>Required capabilities <span className="optional">optional, comma-separated</span><input name="required_capabilities" placeholder="e.g. python, testing" /></label>{tasks.length > 0 && <fieldset className="dependency-options"><legend>Depends on <span className="optional">optional</span></legend>{tasks.map(t => <label className="checkbox-label" key={t.id}><input type="checkbox" name="dependencies" value={t.id} /><span>{t.title}</span></label>)}</fieldset>}<p className="form-hint">A matching teammate can claim this task once its dependencies are complete. Leave capabilities empty to open it to everyone.</p></>}
-        {dialog === 'agent' && <><label>Teammate name<input name="name" required placeholder="e.g. Atlas, my OpenCode agent" maxLength={80} /></label><label>Agent tool<input name="kind" list="agent-tools" defaultValue="opencode" required maxLength={60} placeholder="Any tool ID, including a future tool" /><datalist id="agent-tools">{['opencode', 'cline', 'omnirush', 'agentzero', 'claude', 'codex', 'kiro', 'antigravity', 'custom'].map(kind => <option key={kind}>{kind}</option>)}</datalist></label><label>Strengths <span className="optional">comma-separated</span><input name="capabilities" placeholder="frontend, python, testing, review" /></label><label>Role & context<textarea name="description" rows={2} maxLength={5000} placeholder="What should teammates know about this agent?" /></label><label>Limitations <span className="optional">one per line</span><textarea name="limitations" rows={2} placeholder="e.g. No browser access" /></label><p className="form-hint">Any tool can join through MCP/HTTP. Managed launch requires a node adapter with a verified headless command or jobs API.</p></>}
+         {dialog === 'agent' && <><label>Teammate name<input name="name" required placeholder="e.g. Atlas, my OpenCode agent" maxLength={80} /></label><label>Agent tool<select name="kind" aria-label="Agent tool" value={agentTool} onChange={e => setAgentTool(e.target.value)} required>{agentTools.map(tool => <option key={tool.value} value={tool.value}>{tool.label}</option>)}</select></label>{agentTool === 'custom' && <label>Custom tool ID<input name="custom_kind" required maxLength={60} pattern="[A-Za-z0-9 _-]+" placeholder="e.g. future-wrapper" /></label>}<label>Strengths <span className="optional">comma-separated</span><input name="capabilities" placeholder="frontend, python, testing, review" /></label><label>Role & context<textarea name="description" rows={2} maxLength={5000} placeholder="What should teammates know about this agent?" /></label><label>Limitations <span className="optional">one per line</span><textarea name="limitations" rows={2} placeholder="e.g. No browser access" /></label><p className="form-hint">Choose the tool from the list. Select Other / custom only when the tool is not listed. HTTP is the primary connection; managed Launch requires a configured node runtime.</p></>}
         {dialog === 'memory' && <><label>Title<input name="title" defaultValue={memory?.title} required maxLength={200} placeholder="A decision, a handoff, a useful discovery" /></label><label>Shared knowledge<textarea name="content" defaultValue={memory?.content} required rows={9} maxLength={50000} placeholder="Give your teammates the context they need…" /></label><label>Tags<input name="tags" defaultValue={memory?.tags.join(', ')} placeholder="architecture, decision, handoff" /></label>{memory && <p className="form-hint">Editing version {memory.version}. Conflicting edits are detected before saving.</p>}</>}
         {formError && <p className="form-error" role="alert">{formError}</p>}<div className="dialog-actions"><button type="button" className="button secondary" onClick={close}>Cancel</button><button className="button primary" disabled={busy}>{busy ? <LoaderCircle className="spin" size={16} /> : <>{dialog === 'project' ? 'Create project' : dialog === 'task' ? 'Add task' : dialog === 'agent' ? 'Create connection' : 'Save memory'}<ArrowRight size={15} /></>}</button></div>
       </form>}
