@@ -8,7 +8,6 @@ from fastapi import HTTPException
 
 from .config import PROTOCOL_VERSION
 from .models import MessageCreate
-from .orchestration import ACTIVE_STATES
 
 
 def fail(code, detail):
@@ -74,9 +73,24 @@ class TeamRegistry:
                 "peers": self.peers(principal, principal.project_id), "protocol_version": PROTOCOL_VERSION,
                 "heartbeat_seconds": 25}
 
-    def issues(self, principal, project_id):
+    def _page(self, principal, project_id, table, rank, limit, before, state):
         self.store.project(principal, project_id)
-        return self.store.all("SELECT * FROM agent_issues WHERE project_id=? ORDER BY created_at DESC LIMIT 100", (project_id,))
+        filters, args = ["project_id=?"], [project_id]
+        if state == "active":
+            filters.append(f"{rank}=0")
+        elif state == "history":
+            filters.append(f"{rank}=1")
+        if before:
+            cursor = self.store.one(f"SELECT *,{rank} AS rank FROM {table} WHERE project_id=? AND id=?", (project_id, before))
+            if not cursor:
+                fail(404, "History cursor not found in this project.")
+            filters.append(f"({rank}>? OR ({rank}=? AND (created_at,id)<(?,?)))")
+            args.extend([cursor["rank"], cursor["rank"], cursor["created_at"], cursor["id"]])
+        return self.store.all(f"SELECT * FROM {table} WHERE {' AND '.join(filters)} "
+                              f"ORDER BY {rank} ASC,created_at DESC,id DESC LIMIT ?", (*args, limit))
+
+    def issues(self, principal, project_id, limit=100, before=None, state="all"):
+        return self._page(principal, project_id, "agent_issues", "resolved", limit, before, state)
 
     def issue(self, principal, project_id, agent_id, data):
         with self.store.transaction():
@@ -101,9 +115,8 @@ class TeamRegistry:
             self.store.event(project_id, "agent.issue_resolved", principal, row["agent_id"], row["title"])
         return {"ok": True}
 
-    def help_requests(self, principal, project_id):
-        self.store.project(principal, project_id)
-        return self.store.all("SELECT * FROM help_requests WHERE project_id=? ORDER BY created_at DESC LIMIT 100", (project_id,))
+    def help_requests(self, principal, project_id, limit=100, before=None, state="all"):
+        return self._page(principal, project_id, "help_requests", "(state='answered')", limit, before, state)
 
     def ask(self, principal, project_id, data):
         with self.store.transaction():
@@ -165,10 +178,7 @@ class TeamRegistry:
                 fail(409, "This request is not claimed.")
             if not principal.admin and row["assignee_id"] != principal.agent_id:
                 fail(403, "Only its owner can release this help request.")
-            runtime = self.store.runtimes.runtime(row["assignee_id"])
-            if principal.admin and runtime and runtime["state"] in ACTIVE_STATES:
-                fail(409, "Stop the managed worker and wait for its termination report before releasing this request.")
-            self.store.runtimes.release_allowed(row["assignee_id"])
+            self.store.runtimes.release_allowed(row["assignee_id"], principal)
             self.store.db.execute("UPDATE help_requests SET assignee_id=NULL,state='open',updated_at=? WHERE id=?",
                                   (time.time(), help_id))
         return {"ok": True}

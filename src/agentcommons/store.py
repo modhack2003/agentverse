@@ -357,11 +357,27 @@ class Store:
         # Admin is a participant named human, not an observer of other agents' DMs.
         return "(recipient_id IS NULL OR recipient_id=? OR sender_id=?)", (principal.actor, principal.actor)
 
-    def messages(self, principal, project_id, limit=100):
+    def messages(self, principal, project_id, limit=100, before=None, channel=None, recipient_id=None):
         self.project(principal, project_id)
         where, args = self.visible_sql(principal)
+        filters = [where]
+        if before is not None:
+            cursor = self.one(f"SELECT created_at,id FROM messages WHERE project_id=? AND id=? AND {where}",
+                              (project_id, before, *args))
+            if not cursor:
+                fail(404, "Message cursor not found.")
+            filters.append("(created_at,id) < (?,?)")
+            args = (*args, cursor["created_at"], cursor["id"])
+        if channel:
+            filters.append("recipient_id IS NULL AND channel=?")
+            args = (*args, channel)
+        elif recipient_id:
+            if recipient_id != "human":
+                self.agent(principal, project_id, recipient_id)
+            filters.append("((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?))")
+            args = (*args, principal.actor, recipient_id, recipient_id, principal.actor)
         return list(reversed(self.all(
-            f"SELECT * FROM messages WHERE project_id=? AND {where} ORDER BY created_at DESC LIMIT ?",
+            f"SELECT * FROM messages WHERE project_id=? AND {' AND '.join(filters)} ORDER BY created_at DESC,id DESC LIMIT ?",
             (project_id, *args, limit),
         )))
 
@@ -473,10 +489,7 @@ class Store:
                 fail(403, "Only the assignee or an administrator can release a task.")
             if task["status"] != "in_progress":
                 fail(409, "Only in-progress tasks can be released.")
-            runtime = self.runtimes.runtime(task["assignee_id"])
-            if principal.admin and runtime and runtime["state"] in ACTIVE_STATES:
-                fail(409, "Stop the managed worker and wait for its termination report before releasing this task.")
-            self.runtimes.release_allowed(task["assignee_id"])
+            self.runtimes.release_allowed(task["assignee_id"], principal)
             self.db.execute("UPDATE tasks SET status='backlog',assignee_id=NULL,updated_at=? WHERE id=?",
                             (time.time(), task_id))
             self.event(project_id, "task.released", principal, task_id, reason)
@@ -543,7 +556,7 @@ class Store:
                 fail(403, "Only the reviewer or an administrator can release this review.")
             if task["status"] != "review":
                 fail(409, "This task is not in review.")
-            self.runtimes.release_allowed(task["reviewer_id"])
+            self.runtimes.release_allowed(task["reviewer_id"], principal)
             self.db.execute("UPDATE tasks SET reviewer_id=NULL,updated_at=? WHERE id=?", (time.time(), task_id))
             self.event(project_id, "review.released", principal, task_id, task["title"])
         return self.task(principal, project_id, task_id)

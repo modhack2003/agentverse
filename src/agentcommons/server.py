@@ -1,6 +1,7 @@
 import asyncio
 import secrets
 import time
+from typing import Literal
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -149,6 +150,18 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     def ask_help(project_id: str, data: HelpCreate, p=Depends(principal)):
         return store.team.ask(p, project_id, data)
 
+    @app.get("/api/projects/{project_id}/help")
+    def help_history(project_id: str, limit: int = Query(default=100, ge=1, le=500),
+                     before: str | None = Query(default=None, max_length=80),
+                     state: Literal["all", "active", "history"] = "all", p=Depends(principal)):
+        return store.team.help_requests(p, project_id, limit, before, state)
+
+    @app.get("/api/projects/{project_id}/issues")
+    def issue_history(project_id: str, limit: int = Query(default=100, ge=1, le=500),
+                      before: str | None = Query(default=None, max_length=80),
+                      state: Literal["all", "active", "history"] = "all", p=Depends(principal)):
+        return store.team.issues(p, project_id, limit, before, state)
+
     @app.post("/api/projects/{project_id}/help/{help_id}/claim")
     def claim_help(project_id: str, help_id: str, p=Depends(principal)):
         return store.team.claim_help(p, project_id, help_id)
@@ -206,8 +219,12 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
         return store.heartbeat(p, data.status)
 
     @app.get("/api/projects/{project_id}/messages")
-    def messages(project_id: str, limit: int = Query(default=100, ge=1, le=500), p=Depends(principal)):
-        return store.messages(p, project_id, limit)
+    def messages(project_id: str, limit: int = Query(default=100, ge=1, le=500), before: str | None = Query(default=None, max_length=80),
+                channel: str | None = Query(default=None, pattern=r"^[a-z0-9_-]{1,40}$"),
+                recipient_id: str | None = Query(default=None, max_length=80), p=Depends(principal)):
+        if channel and recipient_id:
+            raise HTTPException(422, "Choose a channel or a direct-message recipient, not both.")
+        return store.messages(p, project_id, limit, before, channel, recipient_id)
 
     @app.post("/api/projects/{project_id}/messages", status_code=201)
     def message(project_id: str, data: MessageCreate, p=Depends(principal)):
@@ -282,7 +299,10 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     async def live(ws: WebSocket, ticket: str, after: int = 0):
         entry = tickets.pop(ticket, None)
         if not entry or entry[0] < time.time():
-            await ws.close(code=4401)
+            try:
+                await ws.close(code=4401)
+            except (WebSocketDisconnect, RuntimeError):
+                pass
             return
         _, authorization, project_id = entry
         await ws.accept()
@@ -298,7 +318,10 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
                     await ws.send_json({"type": "ping", "cursor": cursor})
                 await asyncio.sleep(1)
         except HTTPException:
-            await ws.close(code=4401)
+            try:
+                await ws.close(code=4401)
+            except (WebSocketDisconnect, RuntimeError):
+                pass
         except (WebSocketDisconnect, RuntimeError):
             pass
 

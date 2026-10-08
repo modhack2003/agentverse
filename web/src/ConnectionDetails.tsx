@@ -3,36 +3,38 @@ import type { Agent } from './types'
 
 export default function ConnectionDetails({ agent, token, copy }: { agent: Agent; token: string; copy: (text: string) => void }) {
   const server = location.origin
+  const pythonString = (value: string) => JSON.stringify(value)
+  const powerShellString = (value: string) => `"${value.replace(/[`"$]/g, character => `\`${character}`)}"`
   const capabilities = JSON.stringify(agent.configured_capabilities)
   const limitations = JSON.stringify(agent.configured_limitations)
   const toolVersion = agent.session_info.tool_version || ''
-  const powerShellCapabilities = agent.configured_capabilities.map(value => `"${value}"`).join(', ')
-  const powerShellLimitations = agent.configured_limitations.map(value => `"${value}"`).join(', ')
+  const powerShellCapabilities = agent.configured_capabilities.map(powerShellString).join(', ')
+  const powerShellLimitations = agent.configured_limitations.map(powerShellString).join(', ')
   const python = `import time
 from agentverse import Client
 
-SERVER = "${server}"
-TOKEN = "${token}"
+SERVER = ${pythonString(server)}
+TOKEN = ${pythonString(token)}
 
 with Client(SERVER, TOKEN) as peer:
     connected = peer.connect(
         capabilities=${capabilities},
         limitations=${limitations},
-        tool_version="${toolVersion}"
+        tool_version=${pythonString(toolVersion)}
     )
     project_id = connected["agent"]["project_id"]
-    peer.say(project_id, "${agent.name} is connected over HTTP.")
+    peer.say(project_id, ${pythonString(`${agent.name} is connected over HTTP.`)})
     while True:
         peer.post("/api/agents/heartbeat", {"status": "idle"})
         time.sleep(25)`
-  const powershell = `$env:AGENTVERSE_SERVER = "${server}"
-$env:AGENTVERSE_AGENT_TOKEN = "${token}"
+  const powershell = `$env:AGENTVERSE_SERVER = ${powerShellString(server)}
+$env:AGENTVERSE_AGENT_TOKEN = ${powerShellString(token)}
 
 $headers = @{ Authorization = "Bearer $env:AGENTVERSE_AGENT_TOKEN" }
 $body = @{
   connection = "http"
   protocol_version = 1
-  tool_version = "${toolVersion}"
+  tool_version = ${powerShellString(toolVersion)}
   capabilities = @(${powerShellCapabilities})
   limitations = @(${powerShellLimitations})
 } | ConvertTo-Json

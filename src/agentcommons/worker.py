@@ -15,8 +15,9 @@ from pathlib import Path
 import httpx
 
 from .client import Client
-from .config import identity_env
+from .config import identity_env, agent_environment
 from .http_adapter import read_state
+from .processes import terminate_process
 
 
 class WorkerStopped(BaseException):
@@ -25,19 +26,6 @@ class WorkerStopped(BaseException):
 
 class RemoteCancellationUnconfirmed(RuntimeError):
     pass
-
-
-def reap_process_group(pid):
-    """Terminate descendants even when the process-group leader already exited."""
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-    time.sleep(0.2)
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
 
 
 def result_json(text):
@@ -61,43 +49,29 @@ def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None
                 for arg in shlex.split(command)]
         if not argv:
             raise RuntimeError("Configure a nonempty worker command.")
-        env = {**os.environ, **(extra_env or {}), "AGENTCOMMONS_PROMPT_FILE": str(prompt_file), "AGENTVERSE_PROMPT_FILE": str(prompt_file), "NO_COLOR": "1"}
-        # The child gets its agent token if configured, but never an inherited admin token.
-        env.pop("AGENTCOMMONS_ADMIN_TOKEN", None)
-        env.pop("AGENTCOMMONS_NODE_TOKEN", None)
-        env.pop("AGENTVERSE_ADMIN_TOKEN", None)
-        env.pop("AGENTVERSE_NODE_TOKEN", None)
+        env = agent_environment({**os.environ, **(extra_env or {}), "AGENTCOMMONS_PROMPT_FILE": str(prompt_file),
+                                 "AGENTVERSE_PROMPT_FILE": str(prompt_file), "NO_COLOR": "1"})
         with (Path(scratch) / "output.log").open("w+") as log:
             process = subprocess.Popen(argv, cwd=directory, env=env, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
-                deadline = time.monotonic() + timeout
-                while process.poll() is None:
-                    if stop and stop.is_set():
-                        raise WorkerStopped()
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        raise subprocess.TimeoutExpired(argv, timeout)
-                    try:
-                        process.wait(timeout=min(0.25, remaining))
-                    except subprocess.TimeoutExpired:
-                        continue
-                reap_process_group(process.pid)
+                try:
+                    deadline = time.monotonic() + timeout
+                    while process.poll() is None:
+                        if stop and stop.is_set():
+                            raise WorkerStopped()
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(argv, timeout)
+                        try:
+                            process.wait(timeout=min(0.25, remaining))
+                        except subprocess.TimeoutExpired:
+                            continue
+                finally:
+                    terminate_process(process)
             except BaseException:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    process.wait()
                 state = read_state(env.get("AGENTVERSE_ADAPTER_STATE"))
-                if (state and state.get("confirmed") is not True) or (env.get("AGENTVERSE_RUNTIME_MODE") == "managed_api" and state.get("confirmed") is not True):
+                if (state and state.get("confirmed") is not True) or (env.get("AGENTVERSE_RUNTIME_MODE") == "managed_api" and (not state or state.get("confirmed") is not True)):
                     raise RemoteCancellationUnconfirmed("API cancellation is unconfirmed; this worker's claims remain held.")
                 raise
             log.seek(0, 2)
@@ -105,7 +79,7 @@ def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None
             output = log.read()
         if process.returncode:
             state = read_state(env.get("AGENTVERSE_ADAPTER_STATE"))
-            if (state and state.get("confirmed") is not True) or (env.get("AGENTVERSE_RUNTIME_MODE") == "managed_api" and state.get("confirmed") is not True):
+            if (state and state.get("confirmed") is not True) or (env.get("AGENTVERSE_RUNTIME_MODE") == "managed_api" and (not state or state.get("confirmed") is not True)):
                 raise RemoteCancellationUnconfirmed("The API job may still be active; cancellation must be confirmed before work is reassigned.")
             raise RuntimeError(f"Agent exited with {process.returncode}: {output[-2000:]}")
         return result_json(output)

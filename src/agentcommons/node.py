@@ -1,7 +1,9 @@
 """Outbound-only remote supervisor. Commands and project paths stay on the node."""
 
 import json
+import hashlib
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -16,11 +18,12 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel, Field, model_validator, field_validator
 
-from .models import RuntimeProfile, Diagnostic, validate_settings
+from .models import RuntimeProfile, Diagnostic, validate_settings, execution_contract
 from .orchestration import NODE_LEASE_SECONDS
-from .config import identity_env, PROTOCOL_VERSION
+from .config import identity_env, agent_environment, PROTOCOL_VERSION
 from .drivers import drivers, discover_tools
 from .http_adapter import read_state, reconcile, write_state
+from .processes import terminate_process
 
 
 class HTTPConfig(BaseModel):
@@ -109,6 +112,13 @@ class NodeService:
         profiles, diagnostics = [], []
         for profile in self.profiles.values():
             public = RuntimeProfile(**profile.model_dump())
+            public.required_settings = sorted(set(profile.required_settings) | {
+                key for argument in profile.argv for key in re.findall(r"\{setting:([a-z][a-z0-9_]*)\}", argument)
+            })
+            local_contract = profile.model_dump(exclude={"availability", "diagnostic", "execution_revision"})
+            public.execution_revision = hashlib.sha256(json.dumps(
+                {"profile": local_contract, "repo": str(self.repo)}, sort_keys=True
+            ).encode()).hexdigest()
             adapter = self.adapters.get(profile.driver)
             if profile.protocol_version != PROTOCOL_VERSION:
                 availability, reason = "unavailable", "This adapter uses an unsupported protocol version."
@@ -132,14 +142,14 @@ class NodeService:
                                 cwd=self.repo, capture_output=True, timeout=10,
                             )
                         if base_check.returncode:
-                            reason = f"{reason} Git base branch '{profile.base}' is missing on this node."
+                            availability, reason = "needs_setup", f"Git base branch '{profile.base}' is missing on this node."
                         elif profile.push:
                             remote_check = subprocess.run(
                                 ["git", "remote", "get-url", "origin"],
                                 cwd=self.repo, capture_output=True, timeout=10,
                             )
                             if remote_check.returncode:
-                                reason = f"{reason} Git push is enabled but the repository has no origin remote."
+                                availability, reason = "needs_setup", "Git push is enabled but the repository has no origin remote."
                 except Exception:
                     availability, reason = "unavailable", "The adapter's local health check failed. Check its installation or configuration."
             public.availability, public.diagnostic = availability, reason
@@ -173,8 +183,12 @@ class NodeService:
         if changed:
             try:
                 updated = load_config(self.config_path)
-                if self.children and updated.repo != self.config.repo:
-                    warning = "A repository-path change is waiting for active workers to stop."
+                profiles = {p.id: p for p in updated.profiles}
+                if self.children and (updated.repo != self.config.repo or any(
+                    not child.profile or profiles.get(child.profile.id) != child.profile
+                    for child in self.children.values()
+                )):
+                    warning = "Execution-profile changes are waiting for active workers to stop."
                 else:
                     self.config, self.profiles = updated, {p.id: p for p in updated.profiles}
                     self.repo = Path(updated.repo).expanduser().resolve()
@@ -210,13 +224,16 @@ class NodeService:
             self.queue_report(row, "failed", error="This tool/model is no longer configured on the remote node.")
             return
         public = next((p for p in self.inventory if p.id == profile.id), None)
+        if not public or row.get("run_contract") != execution_contract(public.model_dump()) or row["mode"] != profile.mode:
+            self.queue_report(row, "failed", error="The local execution profile changed after launch. Refresh inventory and launch a new generation.")
+            return
         if profile.mode == "connected" or public and public.availability != "available":
             self.queue_report(row, "failed", error=public.diagnostic if public else "This profile is not a managed runtime.")
             return
         if len(self.children) >= self.config.max_workers:
             self.queue_report(row, "failed", error="Remote node worker capacity reached. Stop a worker and relaunch.")
             return
-        settings = validate_settings(profile.model_dump(), row.get("settings", {}))
+        settings = validate_settings(public.model_dump(), row.get("settings", {}), require=True)
         adapter = self.adapters.get(profile.driver)
         if not adapter:
             self.queue_report(row, "failed", error="The configured adapter is unavailable on this node.")
@@ -230,11 +247,9 @@ class NodeService:
                 "--model", row["model"], "--timeout", str(profile.timeout)]
         if not profile.push:
             argv.append("--no-push")
-        env = {**os.environ, **identity_env(self.server, row["token"], row["model"], settings),
-               "AGENTVERSE_RUN_ID": row["run_id"], "AGENTVERSE_RUNTIME_MODE": profile.mode,
-               "AGENTVERSE_ADAPTER_STATE": str(self.logs / f"{row['run_id']}.json")}
-        for key in ("AGENTCOMMONS_ADMIN_TOKEN", "AGENTCOMMONS_NODE_TOKEN", "AGENTVERSE_ADMIN_TOKEN", "AGENTVERSE_NODE_TOKEN"):
-            env.pop(key, None)
+        env = agent_environment({**os.environ, **identity_env(self.server, row["token"], row["model"], settings),
+                "AGENTVERSE_RUN_ID": row["run_id"], "AGENTVERSE_RUNTIME_MODE": profile.mode,
+                "AGENTVERSE_ADAPTER_STATE": str(self.logs / f"{row['run_id']}.json")})
         if profile.http:
             env["AGENTVERSE_HTTP_CONFIG"] = profile.http.model_dump_json()
         log_path = self.logs / f"{row['run_id']}.log"
@@ -251,28 +266,10 @@ class NodeService:
 
     @staticmethod
     def terminate(child):
-        if child.process.poll() is None:
-            try:
-                os.killpg(child.process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                child.process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(child.process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                child.process.wait(timeout=5)
-        else:
-            # A wrapper can exit while leaving descendants in its process group.
-            try:
-                os.killpg(child.process.pid, signal.SIGTERM)
-                time.sleep(0.2)
-                os.killpg(child.process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        child.log.close()
+        try:
+            terminate_process(child.process, grace=15)
+        finally:
+            child.log.close()
 
     def step(self):
         state = self.request("poll", {})
@@ -284,7 +281,7 @@ class NodeService:
                 stopping.append((agent_id, child))
             elif child.process.poll() is not None:
                 code = child.process.returncode
-                child.log.close()
+                self.terminate(child)
                 del self.children[agent_id]
                 confirmed = self.confirmed(child)
                 self.queue_report(row, "failed" if confirmed else "unconfirmed", error=f"Worker exited with code {code}. Inspect {child.run_id}.log on this node." if confirmed else "The API adapter has not confirmed its remote job ended. Work stays held while cancellation is checked.")

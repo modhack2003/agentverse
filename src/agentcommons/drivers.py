@@ -21,11 +21,9 @@ class CLIDriver:
             return "unavailable", f"Executable {profile.argv[0]} is not installed or not on the node's PATH."
         advertised = {field.key: field for field in profile.settings_schema}
         for argument in profile.argv:
-            match = re.search(r"\{setting:([a-z][a-z0-9_]*)\}", argument)
-            if match and match.group(1) not in advertised:
-                return "needs_setup", f"Command expects a setting that is not advertised: {match.group(1)}."
-            if match and advertised[match.group(1)].default is None:
-                return "needs_setup", f"Configure the required command setting: {match.group(1)}."
+            for key in re.findall(r"\{setting:([a-z][a-z0-9_]*)\}", argument):
+                if key not in advertised:
+                    return "needs_setup", f"Command expects a setting that is not advertised: {key}."
         return "available", "Headless command found. Model authentication is configured in the tool's own client."
 
     def command(self, profile, model, settings):
@@ -40,7 +38,7 @@ class CLIDriver:
                 continue
             def replace(match):
                 key = match.group(1)
-                if key not in settings:
+                if key not in settings or settings[key] is None:
                     raise ValueError(f"Command expects an unconfigured setting: {key}")
                 value = settings[key]
                 return str(value).lower() if isinstance(value, bool) else str(value)

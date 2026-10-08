@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from fastapi import HTTPException
 
 from .config import PROTOCOL_VERSION
-from .models import validate_settings, RuntimeProfile
+from .models import validate_settings, RuntimeProfile, execution_contract
 
 NODE_LEASE_SECONDS = 45
 NODE_TAKEOVER_SECONDS = 90
@@ -43,7 +43,8 @@ class RuntimeRegistry:
         """)
         for table, additions in {
             "nodes": {"diagnostics": "TEXT NOT NULL DEFAULT '[]'", "capacity": "INTEGER NOT NULL DEFAULT 4", "protocol_version": "INTEGER NOT NULL DEFAULT 1"},
-            "agent_runtimes": {"settings": "TEXT NOT NULL DEFAULT '{}'", "mode": "TEXT NOT NULL DEFAULT 'managed_cli'"},
+            "agent_runtimes": {"settings": "TEXT NOT NULL DEFAULT '{}'", "mode": "TEXT NOT NULL DEFAULT 'managed_cli'",
+                               "run_contract": "TEXT NOT NULL DEFAULT '{}'"},
         }.items():
             existing = {row["name"] for row in store.db.execute(f"PRAGMA table_info({table})")}
             for key, definition in additions.items():
@@ -54,6 +55,7 @@ class RuntimeRegistry:
         row = self.store.one("SELECT * FROM agent_runtimes WHERE agent_id=?", (agent_id,))
         if row:
             row["settings"] = json.loads(row["settings"])
+            row["run_contract"] = json.loads(row["run_contract"])
         return row
 
     def node(self, project_id, node_id):
@@ -103,14 +105,21 @@ class RuntimeRegistry:
             fail(426, f"Unsupported node protocol. AgentVerse supports version {PROTOCOL_VERSION}.")
         with self.store.transaction():
             current = self.store.one("SELECT * FROM nodes WHERE id=?", (node["id"],))
+            incoming = {p.id: execution_contract(p.model_dump()) for p in data.profiles}
+            for row in self.store.all("SELECT * FROM agent_runtimes WHERE node_id=?", (node["id"],)):
+                if row["state"] in ACTIVE_STATES:
+                    contract = json.loads(row["run_contract"])
+                    if contract and incoming.get(row["profile_id"]) != contract:
+                        fail(409, "Stop active generations before changing or removing their execution profile.")
             if current["session_id"] and current["session_id"] != data.session_id:
                 if time.time() - current["last_seen"] < NODE_TAKEOVER_SECONDS:
                     fail(409, "Another service owns this node. Stop it, or wait 90 seconds after disconnection.")
                 # The old connection and worker credentials have expired before takeover.
                 for row in self.store.all("SELECT * FROM agent_runtimes WHERE node_id=?", (node["id"],)):
                     if row["state"] in ACTIVE_STATES:
-                        if row["mode"] == "managed_api":
-                            self._unconfirmed(row, "Previous API job needs cancellation confirmation from its adapter.")
+                        contract = json.loads(row["run_contract"])
+                        if contract.get("mode") != "managed_cli":
+                            self._unconfirmed(row, "Previous remote execution needs termination confirmation from its adapter.")
                         else:
                             self._finished(row, "failed", "Previous node session disconnected.")
             self.store.db.execute("UPDATE nodes SET profiles=?,session_id=?,last_seen=? WHERE id=?",
@@ -142,7 +151,7 @@ class RuntimeRegistry:
         if profile.get("protocol_version", 1) != PROTOCOL_VERSION:
             fail(426, "This tool advertises an unsupported adapter protocol.")
         try:
-            validate_settings(profile, data.settings)
+            validate_settings(profile, data.settings, require=True)
         except ValueError as exc:
             fail(422, str(exc))
         return node
@@ -156,12 +165,12 @@ class RuntimeRegistry:
             current = self.runtime(agent_id)
             if current and current["state"] in ACTIVE_STATES:
                 fail(409, "Stop the agent before changing its node, tool, or model.")
-            values = validate_settings(profile, data.settings)
+            values = validate_settings(profile, data.settings, require=True)
             self.store.db.execute(
                 "INSERT INTO agent_runtimes(agent_id,project_id,node_id,profile_id,model,updated_at) "
                 "VALUES(?,?,?,?,?,?) ON CONFLICT(agent_id) DO UPDATE SET node_id=excluded.node_id,"
                 "profile_id=excluded.profile_id,model=excluded.model,state='stopped',desired_state='stopped',"
-                "run_id=NULL,pid=NULL,error='',updated_at=excluded.updated_at",
+                "run_id=NULL,run_contract='{}',pid=NULL,error='',updated_at=excluded.updated_at",
                 (agent_id, project_id, data.node_id, data.profile_id, data.model, time.time()))
             self.store.db.execute("UPDATE agent_runtimes SET settings=?,mode=?,state=? WHERE agent_id=?",
                                   (json.dumps(values), profile.get("mode", "managed_cli"),
@@ -195,19 +204,19 @@ class RuntimeRegistry:
             row = self.runtime(agent_id)
             if not row or row["project_id"] != project_id:
                 fail(409, "Configure a remote node, tool, and model first.")
+            if row["state"] in {"unconfirmed", "stopping"}:
+                fail(409, "Wait for termination confirmation before relaunching this worker.")
             node = self._validate_config(project_id, agent_id, RuntimeConfig(**row))
             profile = next(p for p in node["profiles"] if p["id"] == row["profile_id"])
-            if row["mode"] == "connected":
+            if profile["mode"] == "connected":
                 fail(409, "Start this session in its own client and connect it with MCP or HTTP.")
             if profile.get("availability", "available") != "available":
                 fail(409, profile.get("diagnostic") or "This tool needs setup on its node before it can launch.")
-            if row["state"] == "unconfirmed":
-                fail(409, "The remote API adapter has not confirmed cancellation of its previous job.")
             if not node["online"]:
                 fail(409, "The remote node is offline. Start its node service before launching an agent.")
-            if row["state"] == "stopping":
-                fail(409, "Wait for the previous process to stop before relaunching.")
             if row["state"] in {"queued", "starting", "running"}:
+                if row["mode"] != profile["mode"]:
+                    fail(409, "The active runtime profile changed. Stop this generation before relaunching it.")
                 return row
             agent = self.store.agent(principal, project_id, agent_id)
             if agent["online"] or self.store.one(
@@ -218,8 +227,9 @@ class RuntimeRegistry:
                 fail(409, "This teammate still has an active help request. Release or answer it before launching.")
             self.store.db.execute(
                 "UPDATE agent_runtimes SET desired_state='running',state='queued',run_id=?,pid=NULL,"
-                "error='',updated_at=? WHERE agent_id=?",
-                (f"run_{uuid.uuid4().hex}", time.time(), agent_id))
+                "mode=?,run_contract=?,settings=?,error='',updated_at=? WHERE agent_id=?",
+                (f"run_{uuid.uuid4().hex}", profile["mode"], json.dumps(execution_contract(profile)),
+                 json.dumps(validate_settings(profile, row["settings"], require=True)), time.time(), agent_id))
             self.store.event(project_id, "runtime.launch", principal, agent_id, "Requested remote agent launch")
         return self.runtime(agent_id)
 
@@ -266,10 +276,12 @@ class RuntimeRegistry:
             if not row or row["run_id"] != principal.run_id or row["desired_state"] != "running":
                 fail(409, "This managed worker is stopping.")
 
-    def release_allowed(self, agent_id):
+    def release_allowed(self, agent_id, principal=None):
         row = self.runtime(agent_id) if agent_id else None
         if row and row["state"] == "unconfirmed":
             fail(409, "The API job's cancellation is unconfirmed. Its claims stay held until the adapter confirms termination.")
+        if principal and principal.admin and row and row["state"] in ACTIVE_STATES:
+            fail(409, "Stop the managed worker and wait for its termination report before releasing its work.")
 
     def poll(self, node, data):
         with self.store.transaction():
@@ -278,6 +290,7 @@ class RuntimeRegistry:
             runtimes = []
             for row in self.store.all("SELECT * FROM agent_runtimes WHERE node_id=?", (node["id"],)):
                 row["settings"] = json.loads(row["settings"])
+                row["run_contract"] = json.loads(row["run_contract"])
                 if row["state"] == "queued":
                     self.store.db.execute("UPDATE agent_runtimes SET state='starting',updated_at=? WHERE agent_id=?",
                                           (time.time(), row["agent_id"]))

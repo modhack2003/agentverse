@@ -13,7 +13,7 @@ import RemoteAgents from './RemoteAgents'
 import ConnectionDetails from './ConnectionDetails'
 import { ThemePicker } from './Themes'
 import { readStorage, writeStorage, removeStorage } from './storage'
-import type { Agent, Memory, Project, Snapshot, Task } from './types'
+import type { Agent, Memory, Message, Project, Snapshot, Task } from './types'
 
 const sections = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -95,20 +95,62 @@ function TaskCard({ task, agents, onClick }: { task: Task; agents: Agent[]; onCl
 
 function Chat({ snapshot, token, reload, full = false, initialRecipient = '' }: { snapshot: Snapshot; token: string; reload: () => Promise<void>; full?: boolean; initialRecipient?: string }) {
   const [content, setContent] = useState(''), [target, setTarget] = useState(initialRecipient || '#general'), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const [history, setHistory] = useState<{ key: string; messages: Message[]; hasOlder: boolean }>({ key: '', messages: [], hasOlder: false })
+  const [historyBusy, setHistoryBusy] = useState(false), [loading, setLoading] = useState(false)
   const end = useRef<HTMLDivElement>(null)
-  useEffect(() => { if (initialRecipient) setTarget(initialRecipient) }, [initialRecipient])
+  useEffect(() => {
+    const valid = initialRecipient && snapshot.agents.some(agent => agent.id === initialRecipient) ? initialRecipient : '#general'
+    setTarget(valid)
+  }, [initialRecipient, snapshot.project.id])
+  useEffect(() => {
+    if (!target.startsWith('#') && target !== 'human' && !snapshot.agents.some(agent => agent.id === target)) setTarget('#general')
+  }, [snapshot.agents, target])
   const dm = !target.startsWith('#')
-  const messages = snapshot.messages.filter(m => dm ? !!m.recipient_id && ((m.sender_id === snapshot.identity.actor_id && m.recipient_id === target) || (m.sender_id === target && m.recipient_id === snapshot.identity.actor_id)) : !m.recipient_id && m.channel === target.slice(1))
-  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }) }, [messages.length, target])
+  const query = dm ? `recipient_id=${encodeURIComponent(target)}` : `channel=${encodeURIComponent(target.slice(1))}`
+  const conversationKey = `${snapshot.project.id}/${target}`
+  const activeConversation = useRef(conversationKey); activeConversation.current = conversationKey
+  const messages = history.key === conversationKey ? history.messages : []
+  const merge = (rows: Message[]) => [...new Map(rows.map(message => [message.id, message])).values()].sort((a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id))
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true); setError('')
+    api<Message[]>(token, `/projects/${snapshot.project.id}/messages?limit=100&${query}`).then(page => {
+      if (cancelled) return
+      setHistory(current => current.key === conversationKey
+        ? { ...current, messages: merge([...current.messages, ...page]) }
+        : { key: conversationKey, messages: page, hasOlder: page.length === 100 })
+    }).catch(e => { if (!cancelled) setError(e.message) }).finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [token, conversationKey, snapshot.cursor])
+  async function loadHistory() {
+    if (historyBusy) return
+    setHistoryBusy(true)
+    try {
+      const before = messages[0]?.id
+      if (!before) return
+      const page = await api<Message[]>(token, `/projects/${snapshot.project.id}/messages?limit=100&${query}&before=${encodeURIComponent(before)}`)
+      if (activeConversation.current !== conversationKey) return
+      setHistory(current => current.key === conversationKey ? { ...current, messages: merge([...page, ...current.messages]), hasOlder: page.length === 100 } : current)
+    } catch (e) { if (activeConversation.current === conversationKey) setError((e as Error).message) } finally { setHistoryBusy(false) }
+  }
+  useEffect(() => { end.current?.scrollIntoView({ block: 'nearest' }) }, [messages.at(-1)?.id, target])
   async function send(e: FormEvent) {
     e.preventDefault(); if (!content.trim() || busy) return; setBusy(true); setError('')
-    try { await api(token, `/projects/${snapshot.project.id}/messages`, 'POST', { content: content.trim(), channel: dm ? 'general' : target.slice(1), recipient_id: dm ? target : null }); setContent(''); await reload() }
+    try {
+      if (dm && target !== 'human' && !snapshot.agents.some(agent => agent.id === target)) { setTarget('#general'); throw new Error('That teammate is not part of the current project.') }
+      const saved = await api<Message>(token, `/projects/${snapshot.project.id}/messages`, 'POST', { content: content.trim(), channel: dm ? 'general' : target.slice(1), recipient_id: dm ? target : null })
+      if (activeConversation.current !== conversationKey) return
+      setContent(''); setHistory(current => current.key === conversationKey ? { ...current, messages: merge([...current.messages, saved]) } : { key: conversationKey, messages: [saved], hasOlder: false })
+      await reload().catch(() => setError('Message sent; workspace refresh failed. Live updates will retry.'))
+    }
     catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return <section className={`panel chat-panel ${full ? 'full-chat' : ''}`}>
     <div className="panel-heading"><div className="heading-icon"><MessageSquare size={17} /><h2>Team conversation</h2></div><span className="live-label"><span className="status-dot green" /> Shared context</span></div>
     <div className="channel-picker"><Hash size={16} /><select aria-label="Conversation" value={target} onChange={e => setTarget(e.target.value)}><optgroup label="Team channels"><option value="#general">general</option><option value="#engineering">engineering</option><option value="#reviews">reviews</option></optgroup><optgroup label="Direct messages">{snapshot.agents.filter(a => a.id !== snapshot.identity.actor_id).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}{!snapshot.identity.admin && <option value="human">Workspace owner</option>}</optgroup></select>{dm && <LockKeyhole size={13} />}</div>
-    <div className="chat-messages">{messages.length === 0 && <Empty icon={<MessageSquare size={25} />} title={dm ? 'A conversation just for you two' : 'Start the conversation'}>Ideas, questions, and handoffs belong here.</Empty>}
+    <div className="chat-messages">{messages.length === 0 && !loading && !error && <Empty icon={<MessageSquare size={25} />} title={dm ? 'A conversation just for you two' : 'Start the conversation'}>Ideas, questions, and handoffs belong here.</Empty>}
+      {loading && messages.length === 0 && <p className="subtle">Loading conversation…</p>}
+      {history.key === conversationKey && history.hasOlder && <button className="text-button" disabled={historyBusy} onClick={() => void loadHistory()}>{historyBusy ? 'Loading history…' : 'Load older messages'}</button>}
       {messages.map(message => {
         const agent = snapshot.agents.find(a => a.id === message.sender_id)
         return <div className="message" key={message.id}><Avatar agent={agent} human={message.sender_id === 'human'} /><div className="message-body"><div className="message-head"><strong>{message.sender_id === 'human' ? 'You · workspace owner' : agent?.name || 'Teammate'}</strong><time>{new Date(message.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.content}</p>{message.task_id && <span className="message-task"><ListTodo size={11} /> Linked to {snapshot.tasks.find(t => t.id === message.task_id)?.title || 'a task'}</span>}</div></div>
@@ -126,8 +168,10 @@ export default function App() {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [formError, setFormError] = useState(''), [toast, setToast] = useState('')
   const [live, setLive] = useState(false), [mobileNav, setMobileNav] = useState(false), [search, setSearch] = useState(''), [dmRecipient, setDmRecipient] = useState('')
   const [memorySearch, setMemorySearch] = useState('')
+  const [refreshNotice, setRefreshNotice] = useState('')
   const [admin, setAdmin] = useState(false)
   const [agentTool, setAgentTool] = useState('opencode')
+  const submitting = useRef(false)
   const activeProject = useRef(projectId); activeProject.current = projectId
   const close = useCallback(() => { setDialog(null); setFormError(''); setConnection(null) }, [])
 
@@ -148,6 +192,12 @@ export default function App() {
     loadProjects().catch(e => { if (alive) setError(e.message) })
     return () => { alive = false }
   }, [token, loadProjects])
+  useEffect(() => { setDmRecipient(''); setSearch(''); setMemorySearch('') }, [projectId])
+  useEffect(() => {
+    if (!refreshNotice) return
+    const timer = setInterval(() => { void loadProjects().then(() => setRefreshNotice('')).catch(() => {}) }, 15000)
+    return () => clearInterval(timer)
+  }, [refreshNotice, loadProjects])
   useEffect(() => {
     if (!projectId || !token) return
     setSnapshot(null); setLive(false)
@@ -187,12 +237,16 @@ export default function App() {
     catch (e) { setFormError((e as Error).message); throw e } finally { setBusy(false) }
   }
   async function submitForm(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault(); const form = new FormData(e.currentTarget)
+    e.preventDefault(); if (submitting.current) return
+    submitting.current = true
+    const form = new FormData(e.currentTarget)
     const field = (name: string) => String(form.get(name) || '').trim()
     try {
       if (dialog === 'project') {
-        const result = await mutate('/projects', { name: field('name'), goal: field('goal'), repo_url: field('repo_url'), auto_plan: form.has('auto_plan') }) as Project
-        await loadProjects(); setProjectId(result.id); setSection('overview'); setToast('Project created. Your team can start planning.'); close()
+        setBusy(true); setFormError('')
+        const result = await api<Project>(token, '/projects', 'POST', { name: field('name'), goal: field('goal'), repo_url: field('repo_url'), auto_plan: form.has('auto_plan') })
+        setProjects(current => current.some(project => project.id === result.id) ? current : [...current, result]); setProjectId(result.id); setSection('overview'); setToast('Project created. Your team can start planning.'); close()
+        await loadProjects().catch(() => setRefreshNotice('Project saved; the project list refresh failed. Your saved project is selected. Refresh will retry automatically.'))
       } else if (dialog === 'task') {
         await mutate(`/projects/${projectId}/tasks`, { title: field('title'), description: field('description'), priority: field('priority'), dependencies: form.getAll('dependencies'), required_capabilities: field('required_capabilities').split(',').map(s => s.trim()).filter(Boolean) }); setToast('Task added to the team board.'); close()
       } else if (dialog === 'agent') {
@@ -201,7 +255,8 @@ export default function App() {
       } else if (dialog === 'memory') {
         await mutate(`/projects/${projectId}/memories${memory ? `/${memory.id}` : ''}`, { title: field('title'), content: field('content'), tags: field('tags').split(',').map(s => s.trim()).filter(Boolean), expected_version: memory?.version }, memory ? 'PUT' : 'POST'); setToast('Shared memory saved.'); close()
       }
-    } catch { /* Form error is presented in the dialog. */ }
+    } catch (e) { if (e instanceof Error) setFormError(e.message) }
+    finally { submitting.current = false; setBusy(false) }
   }
   async function togglePause() {
     try { await mutate(`/projects/${projectId}`, { status: snapshot?.project.status === 'paused' ? 'active' : 'paused' }, 'PATCH'); await loadProjects() } catch { setError('Could not change the project status.') }
@@ -226,17 +281,18 @@ export default function App() {
       <div className="sidebar-label">WORKSPACE</div>
       <nav>{sections.map(item => <button key={item.id} className={`nav-item ${section === item.id ? 'selected' : ''}`} onClick={() => { setSection(item.id); setMobileNav(false) }}><item.icon size={18} /><span>{item.label}</span>{item.id === 'reviews' && inReview > 0 && <span className="nav-count">{inReview}</span>}</button>)}</nav>
       <div className="sidebar-label projects-label">PROJECTS {admin && <button className="icon-button" aria-label="Create project" onClick={() => open('project')}><Plus size={15} /></button>}</div>
-      <div className="project-list">{projects.map(p => <button key={p.id} className={`project-item ${projectId === p.id ? 'selected' : ''}`} onClick={() => { setProjectId(p.id); setMobileNav(false) }}><span className={`status-dot ${p.status === 'active' ? 'purple' : 'muted'}`} /><span>{p.name}</span>{projectId === p.id && <ChevronRight size={13} />}</button>)}{projects.length === 0 && <span className="sidebar-empty">Your next big idea goes here.</span>}</div>
+       <div className="project-list">{projects.map(p => <button key={p.id} className={`project-item ${projectId === p.id ? 'selected' : ''}`} onClick={() => { setDmRecipient(''); setProjectId(p.id); setMobileNav(false) }}><span className={`status-dot ${p.status === 'active' ? 'purple' : 'muted'}`} /><span>{p.name}</span>{projectId === p.id && <ChevronRight size={13} />}</button>)}{projects.length === 0 && <span className="sidebar-empty">Your next big idea goes here.</span>}</div>
       <div className="sidebar-bottom"><div className="team-principle"><span><Sparkles size={18} /></span><strong>Better, together.</strong><p>Every agent has a voice.<br />Every project has a team.</p></div><button className="profile-button" onClick={logout}><span className="profile-avatar">{admin ? 'Y' : 'A'}</span><span><strong>{admin ? 'Workspace owner' : 'Agent session'}</strong><small>Connected remotely</small></span><LogOut size={16} /></button></div>
     </aside>
     <div className="main-shell"><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Open navigation"><Menu size={20} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{project?.name || 'Getting started'}</strong></div><div className="topbar-actions"><span className={`connection-state ${live ? 'connected' : ''}`}><span className={`status-dot ${live ? 'green' : 'amber'}`} />{live ? 'Live workspace' : projectId ? 'Connecting…' : 'Ready to connect'}</span><ThemePicker /><a href="https://github.com/modhack2003/agentverse" target="_blank" rel="noreferrer" className="docs-link">Documentation <ArrowUpRight size={13} /></a><span className="top-avatar">{admin ? 'Y' : 'A'}</span></div></header>
       <main className="main-content">
         {error && <div className="error-banner" role="alert">{error}<button onClick={logout}>Reconnect</button></div>}
+        {refreshNotice && <div className="error-banner" role="status">{refreshNotice}<button onClick={() => void loadProjects().then(() => setRefreshNotice('')).catch(() => {})}>Retry refresh</button></div>}
         <div className="page-heading"><div><div className="eyebrow">YOUR AGENTS. ONE COMMON GROUND.</div><h1>{section === 'overview' ? 'Your team, in sync.' : sections.find(s => s.id === section)?.label}</h1><p>{({ overview: 'A little coordination. A lot of possibility.', tasks: 'Clear ownership. Shared progress. Nothing lost between agents.', chat: 'Ideas, questions, and handoffs — all in one conversation.', memory: 'The context your whole team can build on.', reviews: 'A second set of eyes, from an equal teammate.', agents: 'Different tools. Different strengths. One connected team.' } as Record<string, string>)[section]}</p></div><div className="page-actions">{admin && project && <button className="button secondary pause-button" onClick={() => void togglePause()} disabled={busy}>{project.status === 'paused' ? <Play size={15} /> : <Pause size={15} />}{project.status === 'paused' ? 'Resume' : 'Pause'}</button>}{project && <button className="button primary" onClick={() => { if (section === 'memory') { setMemory(null); open('memory') } else if (section === 'agents') open('agent'); else open('task') }} disabled={section === 'agents' && !admin}><Plus size={16} />{section === 'memory' ? 'Add memory' : section === 'agents' ? 'Connect agent' : 'New task'}</button>}</div></div>
         {!projectId && <section className="welcome-panel"><div className="welcome-symbol"><Sparkles size={40} /></div><span className="eyebrow">A NEW KIND OF TEAMWORK</span><h2>One project. Unlimited perspectives.</h2><p>Create a project, share the goal, and connect your agents.<br />They’ll plan, pick up work, and help each other move it forward.</p>{admin && <button className="button primary" onClick={() => open('project')}><Plus size={17} /> Create your first project</button>}<div className="welcome-capabilities"><span><MessageSquare size={18} /> Natural conversations</span><span><GitBranch size={18} /> Parallel work</span><span><BookOpen size={18} /> Shared memory</span></div></section>}
         {projectId && !snapshot && !error && <div className="loading-state"><LoaderCircle size={25} className="spin" /> Bringing your workspace together…</div>}
         {snapshot && <>
-          {project?.status === 'paused' && <div className="pause-banner"><Pause size={16} /> This project is paused. Agents will wait before claiming or submitting new work.</div>}
+           {project?.status === 'paused' && <div className="pause-banner"><Pause size={16} /> This project is paused. Agents will wait before claiming new work; already-owned work can finish safely.</div>}
           {section === 'overview' && <>
             <section className="objective"><div className="objective-icon"><Sparkles size={22} /></div><div className="objective-text"><span className="eyebrow">THE COMMON GOAL</span><h2>{snapshot.project.goal}</h2><div>{snapshot.project.repo_url ? <span><GitBranch size={13} /> {snapshot.project.repo_url}</span> : <span><Globe size={13} /> Remote collaborative workspace</span>}<span className="objective-divider" /><span><Users size={13} /> Peer-to-peer team</span></div></div><span className={`badge ${snapshot.project.status === 'active' ? 'green' : 'amber'}`}><span className={`status-dot ${snapshot.project.status === 'active' ? 'green' : 'amber'}`} />{snapshot.project.status === 'active' ? 'Active project' : 'Paused'}</span></section>
             <div className="stats-grid">{[
@@ -248,13 +304,13 @@ export default function App() {
             <div className="overview-grid"><div className="overview-left"><section className="panel team-panel"><div className="panel-heading"><div className="heading-icon"><Users size={17} /><h2>The team</h2><span className="count-pill">{agents.length}</span></div>{admin && <button className="text-button" onClick={() => open('agent')}>Connect agent <Plus size={14} /></button>}</div>{agents.length ? <div className="team-strip">{agents.map(agent => <button className="team-member" key={agent.id} onClick={() => { setDmRecipient(agent.id); setSection('chat') }}><div className="team-member-avatar"><Avatar agent={agent} /><span className={`status-dot ${agent.online ? 'green' : 'muted'}`} /></div><strong>{agent.name}</strong><span>{agent.online ? agent.status === 'working' ? 'Working on a task' : 'Ready to help' : 'Waiting to connect'}</span></button>)}</div> : <Empty icon={<Bot size={25} />} title="Your teammates are one connection away">Connect an agent to begin automatic planning and collaboration.</Empty>}</section>
               <section className="work-section"><div className="section-heading"><div><h2>Work in motion</h2><span>The next steps toward your common goal</span></div><button className="text-button" onClick={() => setSection('tasks')}>View board <ArrowRight size={14} /></button></div><div className="mini-board">{statuses.slice(0, 3).map(status => <div className="mini-column" key={status.id}><div className="column-title"><span className={`status-dot ${status.color}`} /><h3>{status.label}</h3><span>{tasks.filter(t => t.status === status.id).length}</span></div>{tasks.filter(t => t.status === status.id).slice(0, 2).map(t => <TaskCard key={t.id} task={t} agents={agents} onClick={() => detail(t)} />)}{!tasks.some(t => t.status === status.id) && <div className="empty-column">{status.id === 'backlog' ? 'Room for the next idea' : status.id === 'in_progress' ? 'Ready when the team is' : 'Good work deserves a review'}</div>}</div>)}</div></section>
               <section className="panel activity-panel"><div className="panel-heading"><div className="heading-icon"><Activity size={17} /><h2>Around the workspace</h2></div><span className="subtle">Latest activity</span></div><div className="activity-list">{snapshot.events.slice(-5).reverse().map(event => <div className="activity-item" key={event.id}><span className="activity-icon">{event.kind.startsWith('message') ? <MessageSquare size={14} /> : event.kind.startsWith('memory') ? <BookOpen size={14} /> : <CircleDot size={14} />}</span><div><strong>{actorName(event.actor_id)}</strong> <span>{event.detail}</span></div><time>{new Date(event.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div>)}</div></section>
-            </div><Chat snapshot={snapshot} token={token} reload={reload} /></div>
+            </div><Chat key={projectId} snapshot={snapshot} token={token} reload={reload} /></div>
           </>}
           {section === 'tasks' && <><div className="board-toolbar"><span><ListTodo size={16} /> {tasks.length} tasks across the team</span><div className="search-field"><Search size={15} /><input aria-label="Search tasks" placeholder="Find a task…" value={search} onChange={e => setSearch(e.target.value)} /></div></div><div className="task-board">{statuses.map(status => <section className="board-column" key={status.id}><div className="column-title"><span className={`status-dot ${status.color}`} /><h3>{status.label}</h3><span>{filtered.filter(t => t.status === status.id).length}</span><button className="icon-button" aria-label={`Add task to ${status.label}`} onClick={() => open('task')}><Plus size={14} /></button></div>{filtered.filter(t => t.status === status.id).map(t => <TaskCard key={t.id} task={t} agents={agents} onClick={() => detail(t)} />)}{!filtered.some(t => t.status === status.id) && <div className="empty-column">Nothing here yet. Progress will show up as your team works.</div>}</section>)}</div></>}
-          {section === 'chat' && <Chat snapshot={snapshot} token={token} reload={reload} full initialRecipient={dmRecipient} />}
+          {section === 'chat' && <Chat key={projectId} snapshot={snapshot} token={token} reload={reload} full initialRecipient={dmRecipient} />}
           {section === 'memory' && <><div className="board-toolbar"><span><BookOpen size={16} />{snapshot.memories.length} shared notes</span><div className="search-field"><Search size={15} /><input aria-label="Search memory" placeholder="Search notes and tags…" value={memorySearch} onChange={e => setMemorySearch(e.target.value)} /></div></div><div className="memory-grid">{snapshot.memories.filter(note => `${note.title} ${note.content} ${note.tags.join(' ')}`.toLowerCase().includes(memorySearch.toLowerCase())).map(note => <button key={note.id} className="panel memory-card" onClick={() => { setMemory(note); open('memory') }}><div className="memory-top"><span className="memory-icon"><BookOpen size={19} /></span><span>v{note.version}</span></div><h2>{note.title}</h2><p>{note.content}</p><div className="memory-tags">{note.tags.map(tag => <span key={tag}>{tag}</span>)}</div><div className="memory-footer">{actorName(note.author_id)}<span>{new Date(note.updated_at * 1000).toLocaleDateString()}</span></div></button>)}{snapshot.memories.length === 0 && <div className="panel spanning"><Empty icon={<BookOpen size={30} />} title="Build a shared understanding">Save decisions, architecture notes, and handoffs. Your agents can read and update them through MCP or the API.</Empty></div>}{snapshot.memories.length > 0 && !snapshot.memories.some(note => `${note.title} ${note.content} ${note.tags.join(' ')}`.toLowerCase().includes(memorySearch.toLowerCase())) && <div className="panel spanning"><Empty icon={<Search size={28} />} title="No matching memories">Try a different phrase, title, or tag.</Empty></div>}</div></>}
           {section === 'reviews' && <div className="review-list">{tasks.filter(t => t.status === 'review').map(t => <button className="panel review-card" key={t.id} onClick={() => detail(t)}><span className="review-icon"><GitPullRequest size={23} /></span><div><span className="eyebrow">READY FOR A SECOND SET OF EYES</span><h2>{t.title}</h2><p>{t.summary}</p><span className="branch-label"><GitBranch size={13} />{t.branch} · {t.commit_sha?.slice(0, 8)}</span></div><span className="badge amber">{t.reviewer_id ? `Reviewing: ${actorName(t.reviewer_id)}` : 'Waiting for a peer'}</span><ChevronRight size={20} /></button>)}{inReview === 0 && <div className="panel"><Empty icon={<GitPullRequest size={30} />} title="All caught up">Committed work appears here for an independent teammate to review.</Empty></div>}{snapshot.reviews.length > 0 && <><h2 className="history-heading">Review history</h2>{snapshot.reviews.map(review => <div className="panel review-history" key={review.id}><div><span className={`badge ${review.decision === 'approve' ? 'green' : 'amber'}`}>{review.decision === 'approve' ? 'Approved' : 'Changes requested'}</span><strong>{tasks.find(t => t.id === review.task_id)?.title}</strong><span className="subtle">by {actorName(review.reviewer_id)}</span></div><p>{review.comment}</p><code>{review.commit_sha.slice(0, 12)}</code></div>)}</>}</div>}
-          {section === 'agents' && <RemoteAgents snapshot={snapshot} token={token} reload={reload} avatar={agent => <Avatar agent={agent} />} invite={() => open('agent')} message={agent => { setDmRecipient(agent.id); setSection('chat') }} />}
+          {section === 'agents' && <RemoteAgents key={projectId} snapshot={snapshot} token={token} reload={reload} avatar={agent => <Avatar agent={agent} />} invite={() => open('agent')} message={agent => { setDmRecipient(agent.id); setSection('chat') }} />}
         </>}
         <footer className="page-footer"><span><span className="status-dot green" /> Built for agents. Designed for people.</span><span>AgentVerse <span className="footer-version">v0.2</span></span></footer>
       </main>

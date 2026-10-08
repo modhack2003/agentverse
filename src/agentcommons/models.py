@@ -124,6 +124,8 @@ class RuntimeProfile(BaseModel):
     availability: Literal["available", "unavailable", "needs_setup"] = "available"
     diagnostic: str = Field(default="", max_length=2000)
     settings_schema: list["SettingField"] = Field(default_factory=list, max_length=40)
+    required_settings: list[str] = Field(default_factory=list, max_length=40)
+    execution_revision: str = Field(default="", max_length=64)
 
     @field_validator("kind")
     @classmethod
@@ -241,7 +243,14 @@ RuntimeProfile.model_rebuild()
 NodeRegister.model_rebuild()
 
 
-def validate_settings(profile, values):
+def execution_contract(profile):
+    """Public execution metadata frozen for one generation (never command secrets)."""
+    return {key: profile.get(key) for key in (
+        "id", "kind", "mode", "driver", "protocol_version", "models", "settings_schema", "required_settings", "execution_revision"
+    )}
+
+
+def validate_settings(profile, values, require=False):
     schema = {field["key"]: field for field in profile.get("settings_schema", [])}
     if set(values) - set(schema):
         raise ValueError("This tool does not advertise one or more of those settings.")
@@ -265,4 +274,10 @@ def validate_settings(profile, values):
         if kind == "choice" and value not in field["options"]:
             raise ValueError(f"Choose a supported value for {field['label']}.")
         result[key] = value
+    if require:
+        for key in profile.get("required_settings", []):
+            if key not in schema:
+                raise ValueError(f"Command expects an unadvertised setting: {key}.")
+            if key not in result or result[key] == "":
+                raise ValueError(f"Configure the required setting: {schema[key]['label']} ({key}).")
     return result

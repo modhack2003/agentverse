@@ -1,11 +1,13 @@
 import argparse
+import os
 
 from dotenv import load_dotenv
-from .config import setting
+from .config import setting, agent_environment
 
 
 def main():
-    load_dotenv()
+    if os.getenv("PYTHON_DOTENV_DISABLED") != "1":
+        load_dotenv()
     parser = argparse.ArgumentParser(description="AgentVerse — independent agents, connected intelligence")
     sub = parser.add_subparsers(dest="action", required=True)
     serve = sub.add_parser("serve", help="Run the collaboration server and built web UI")
@@ -34,6 +36,12 @@ def main():
     inspect = sub.add_parser("doctor", help="Inspect installed tools, adapter plugins and node setup")
     inspect.add_argument("--config")
     args = parser.parse_args()
+    if args.action in {"worker", "node"}:
+        # Arguments captured node/agent identity; clear inherited coordinator secrets.
+        filtered = agent_environment(os.environ)
+        for key in set(os.environ) - set(filtered):
+            os.environ.pop(key, None)
+        os.environ["PYTHON_DOTENV_DISABLED"] = "1"
     if args.action == "doctor":
         import json
         from .node import doctor, load_config

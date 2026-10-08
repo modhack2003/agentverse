@@ -229,7 +229,7 @@ def test_missing_tool_does_not_disable_other_node_profiles(live_server, tmp_path
                    cwd=repo, check=True, capture_output=True)
     service = NodeService(url, token, NodeConfig(repo=str(repo), log_dir=str(tmp_path / "logs"), profiles=[
         {**PROFILES[0], "argv": ["agentverse-nonexistent-executable"]},
-        {**PROFILES[0], "id": "healthy", "name": "Healthy CLI", "argv": [sys.executable]},
+        {**PROFILES[0], "id": "healthy", "name": "Healthy CLI", "argv": [sys.executable], "push": False},
     ]))
     try:
         registered = service.register()["node"]
