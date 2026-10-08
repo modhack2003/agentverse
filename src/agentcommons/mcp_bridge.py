@@ -102,10 +102,12 @@ def create_mcp(store):
 
     @mcp.tool()
     def create_task(project_id: str, title: str, ctx: Context, description: str = "",
-                    priority: str = "medium", dependencies: list[str] | None = None) -> dict:
+                    priority: str = "medium", dependencies: list[str] | None = None,
+                    required_capabilities: list[str] | None = None) -> dict:
         """Propose a bounded implementation task. Dependencies must be existing task IDs in this project."""
         return store.create_task(who(ctx), project_id, TaskCreate(
-            title=title, description=description, priority=priority, dependencies=dependencies or []))
+            title=title, description=description, priority=priority, dependencies=dependencies or [],
+            required_capabilities=required_capabilities or []))
 
     @mcp.tool()
     def claim_task(project_id: str, task_id: str, ctx: Context) -> dict:

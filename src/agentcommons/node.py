@@ -121,6 +121,25 @@ class NodeService:
                     availability, reason = adapter.check(profile)
                     if profile.mode != "connected" and repo_error:
                         availability, reason = "needs_setup", repo_error
+                    elif availability == "available" and profile.mode != "connected":
+                        base_check = subprocess.run(
+                            ["git", "rev-parse", "--verify", f"refs/heads/{profile.base}"],
+                            cwd=self.repo, capture_output=True, timeout=10,
+                        )
+                        if base_check.returncode:
+                            base_check = subprocess.run(
+                                ["git", "rev-parse", "--verify", f"refs/remotes/origin/{profile.base}"],
+                                cwd=self.repo, capture_output=True, timeout=10,
+                            )
+                        if base_check.returncode:
+                            reason = f"{reason} Git base branch '{profile.base}' is missing on this node."
+                        elif profile.push:
+                            remote_check = subprocess.run(
+                                ["git", "remote", "get-url", "origin"],
+                                cwd=self.repo, capture_output=True, timeout=10,
+                            )
+                            if remote_check.returncode:
+                                reason = f"{reason} Git push is enabled but the repository has no origin remote."
                 except Exception:
                     availability, reason = "unavailable", "The adapter's local health check failed. Check its installation or configuration."
             public.availability, public.diagnostic = availability, reason
@@ -245,6 +264,14 @@ class NodeService:
                 except ProcessLookupError:
                     pass
                 child.process.wait(timeout=5)
+        else:
+            # A wrapper can exit while leaving descendants in its process group.
+            try:
+                os.killpg(child.process.pid, signal.SIGTERM)
+                time.sleep(0.2)
+                os.killpg(child.process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         child.log.close()
 
     def step(self):

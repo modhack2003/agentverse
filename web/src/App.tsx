@@ -58,16 +58,17 @@ function Empty({ icon, title, children }: { icon: ReactNode; title: string; chil
   return <div className="empty-state">{icon}<h3>{title}</h3><p>{children}</p></div>
 }
 function Login({ onLogin }: { onLogin: (token: string) => void }) {
-  const [username, setUsername] = useState('kali'), [password, setPassword] = useState('kali')
+  const [mode, setMode] = useState<'token' | 'password'>('token')
+  const [username, setUsername] = useState(''), [password, setPassword] = useState('')
   const [token, setToken] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError('')
     try {
-      if (username || password) {
+      if (mode === 'password') {
         const result = await api<{ token: string }>('', '/login', 'POST', { username, password })
         onLogin(result.token)
       } else {
-        await api(token, '/me'); onLogin(token)
+        await api(token, '/me'); onLogin(token.trim())
       }
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
@@ -75,9 +76,8 @@ function Login({ onLogin }: { onLogin: (token: string) => void }) {
     <div className="login-card"><Brand /><span className="eyebrow"><span className="status-dot green" /> A SHARED HOME FOR YOUR AGENTS</span>
       <h1>Great things happen<br />when agents <em>work together.</em></h1><p className="login-description">Bring your favorite agents into one workspace.<br />One goal. Shared context. A team that moves together.</p>
       <div className="login-agent-row">{['opencode', 'cline', 'omnirush', 'agentzero'].map(kind => <span key={kind} className={`avatar ${kind}`}><KindIcon kind={kind} /></span>)}<span>+ any agent</span></div>
-      <form onSubmit={submit}><label htmlFor="user-id">User ID</label><div className="token-input"><LockKeyhole size={17} /><input id="user-id" type="text" autoComplete="username" placeholder="User ID" value={username} onChange={e => setUsername(e.target.value)} required /></div>
-        <label htmlFor="login-password">Password</label><div className="token-input"><LockKeyhole size={17} /><input id="login-password" type="password" autoComplete="current-password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required /></div>
-        <label className="legacy-login" htmlFor="access-token">Legacy access token <small>(agents and existing sessions)</small></label><div className="token-input"><LockKeyhole size={17} /><input id="access-token" aria-label="Workspace access token" type="password" autoComplete="off" placeholder="Optional bearer token" value={token} onChange={e => setToken(e.target.value)} /></div>
+      <form onSubmit={submit}><label htmlFor="login-method">Sign in with</label><select id="login-method" aria-label="Login method" value={mode} onChange={e => setMode(e.target.value as 'token' | 'password')}><option value="token">Access token</option><option value="password">User ID and password</option></select>
+        {mode === 'password' ? <><label htmlFor="user-id">User ID</label><div className="token-input"><LockKeyhole size={17} /><input id="user-id" type="text" autoComplete="username" placeholder="User ID" value={username} onChange={e => setUsername(e.target.value)} required /></div><label htmlFor="login-password">Password</label><div className="token-input"><LockKeyhole size={17} /><input id="login-password" type="password" autoComplete="current-password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required /></div></> : <><label htmlFor="access-token">Workspace access token</label><div className="token-input"><LockKeyhole size={17} /><input id="access-token" type="password" autoComplete="off" placeholder="Paste your admin or agent token" value={token} onChange={e => setToken(e.target.value)} required /></div></>}
         {error && <p className="form-error" role="alert">{error}</p>}<button className="button primary full" disabled={busy}>{busy ? <LoaderCircle className="spin" size={17} /> : <>Enter your workspace <ArrowRight size={17} /></>}</button>
       </form><p className="login-footer"><Globe size={13} /> Self-hosted. Agent-neutral. Yours.</p>
     </div></main>
@@ -178,7 +178,7 @@ export default function App() {
   }, [projectId])
 
   function login(value: string) { writeStorage('agentverse-token', value, true); removeStorage('agentcommons-token', true); setToken(value); setError('') }
-  function logout() { removeStorage('agentverse-token', true); removeStorage('agentcommons-token', true); setToken(''); setProjects([]); setSnapshot(null); setProjectId('') }
+  async function logout() { try { await api(token, '/logout', 'POST') } catch { /* A lost session is already signed out server-side. */ } finally { removeStorage('agentverse-token', true); removeStorage('agentcommons-token', true); setToken(''); setProjects([]); setSnapshot(null); setProjectId('') } }
   function open(mode: Dialog) { setFormError(''); if (mode === 'agent') setAgentTool('opencode'); setDialog(mode) }
   function detail(value: Task) { setTask(value); open('detail') }
   async function mutate(path: string, body?: unknown, method = 'POST') {

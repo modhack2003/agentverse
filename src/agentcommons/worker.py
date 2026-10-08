@@ -27,6 +27,19 @@ class RemoteCancellationUnconfirmed(RuntimeError):
     pass
 
 
+def reap_process_group(pid):
+    """Terminate descendants even when the process-group leader already exited."""
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    time.sleep(0.2)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def result_json(text):
     blocks = re.findall(r"```(?:agentverse|agentcommons|json)\s*\n(.*?)```", text, re.DOTALL)
     candidates = list(reversed(blocks)) + [text.strip()]
@@ -69,6 +82,7 @@ def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None
                         process.wait(timeout=min(0.25, remaining))
                     except subprocess.TimeoutExpired:
                         continue
+                reap_process_group(process.pid)
             except BaseException:
                 try:
                     os.killpg(process.pid, signal.SIGTERM)

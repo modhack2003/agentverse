@@ -143,6 +143,32 @@ def test_mcp_tools_use_scoped_identity(api):
     assert client.post("/mcp/", headers={"Authorization": "Bearer invalid"}, json={}).status_code == 401
 
 
+def test_password_login_requires_configuration_supports_unicode_and_revokes_sessions(api, monkeypatch):
+    client, _ = api
+    for prefix in ("AGENTVERSE", "AGENTCOMMONS"):
+        monkeypatch.delenv(f"{prefix}_ADMIN_USERNAME", raising=False)
+        monkeypatch.delenv(f"{prefix}_ADMIN_PASSWORD", raising=False)
+    assert client.post("/api/login", json={"username": "kali", "password": "kali"}).status_code == 503
+    monkeypatch.setenv("AGENTVERSE_ADMIN_USERNAME", "用戶")
+    monkeypatch.setenv("AGENTVERSE_ADMIN_PASSWORD", "pässword")
+    login = client.post("/api/login", json={"username": "用戶", "password": "pässword"})
+    assert login.status_code == 200
+    token = login.json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/me", headers=headers).json()["admin"] is True
+    assert client.post("/api/logout", headers=headers).json() == {"ok": True}
+    assert client.get("/api/me", headers=headers).status_code == 401
+
+
+def test_password_login_rate_limits_failed_attempts(api, monkeypatch):
+    client, _ = api
+    monkeypatch.setenv("AGENTVERSE_ADMIN_USERNAME", "audit-admin")
+    monkeypatch.setenv("AGENTVERSE_ADMIN_PASSWORD", "audit-password")
+    results = [client.post("/api/login", json={"username": "audit-admin", "password": "wrong"}).status_code for _ in range(10)]
+    assert results == [401] * 10
+    assert client.post("/api/login", json={"username": "audit-admin", "password": "wrong"}).status_code == 429
+
+
 def test_remote_mcp_hostname_and_origin_validation(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 

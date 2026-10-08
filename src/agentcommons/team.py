@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from .config import PROTOCOL_VERSION
 from .models import MessageCreate
+from .orchestration import ACTIVE_STATES
 
 
 def fail(code, detail):
@@ -164,6 +165,9 @@ class TeamRegistry:
                 fail(409, "This request is not claimed.")
             if not principal.admin and row["assignee_id"] != principal.agent_id:
                 fail(403, "Only its owner can release this help request.")
+            runtime = self.store.runtimes.runtime(row["assignee_id"])
+            if principal.admin and runtime and runtime["state"] in ACTIVE_STATES:
+                fail(409, "Stop the managed worker and wait for its termination report before releasing this request.")
             self.store.runtimes.release_allowed(row["assignee_id"])
             self.store.db.execute("UPDATE help_requests SET assignee_id=NULL,state='open',updated_at=? WHERE id=?",
                                   (time.time(), help_id))

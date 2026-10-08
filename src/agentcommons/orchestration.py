@@ -167,9 +167,21 @@ class RuntimeRegistry:
                                   (json.dumps(values), profile.get("mode", "managed_cli"),
                                    "external" if profile.get("mode") == "connected" else "stopped", agent_id))
             agent = self.store.one("SELECT capabilities FROM agents WHERE id=?", (agent_id,))
-            if not json.loads(agent["capabilities"]) and profile.get("capabilities"):
-                self.store.db.execute("UPDATE agents SET capabilities=?,profile_version=profile_version+1 WHERE id=?",
-                                      (json.dumps(profile["capabilities"]), agent_id))
+            configured = json.loads(agent["capabilities"])
+            existing = self.store.one("SELECT limitations FROM agents WHERE id=?", (agent_id,))
+            limitations = json.loads(existing["limitations"]) if existing else []
+            updates = []
+            values_to_update = []
+            if not configured and profile.get("capabilities"):
+                updates.append("capabilities=?")
+                values_to_update.append(json.dumps(profile["capabilities"]))
+            if not limitations and profile.get("limitations"):
+                updates.append("limitations=?")
+                values_to_update.append(json.dumps(profile["limitations"]))
+            if updates:
+                updates.append("profile_version=profile_version+1")
+                values_to_update.append(agent_id)
+                self.store.db.execute(f"UPDATE agents SET {','.join(updates)} WHERE id=?", values_to_update)
             self.store.event(project_id, "runtime.configured", principal, agent_id,
                              f"Configured remote runtime · {data.model or 'tool default model'}")
         return self.runtime(agent_id)
@@ -202,6 +214,8 @@ class RuntimeRegistry:
                 "SELECT id FROM tasks WHERE (assignee_id=? AND status='in_progress') "
                 "OR (reviewer_id=? AND status='review')", (agent_id, agent_id)):
                 fail(409, "This teammate still has an external session or active claim. Stop/release it before launching.")
+            if self.store.one("SELECT id FROM help_requests WHERE assignee_id=? AND state='in_progress'", (agent_id,)):
+                fail(409, "This teammate still has an active help request. Release or answer it before launching.")
             self.store.db.execute(
                 "UPDATE agent_runtimes SET desired_state='running',state='queued',run_id=?,pid=NULL,"
                 "error='',updated_at=? WHERE agent_id=?",
@@ -300,8 +314,8 @@ class RuntimeRegistry:
                     fail(409, "This run has already finished.")
                 return row
             if data.state == "unconfirmed":
-                if row["mode"] != "managed_api":
-                    fail(422, "Unconfirmed cancellation is only valid for a remote API adapter.")
+                # Inventory metadata may change while a generation is running. Holding
+                # claims is the safe response even if the persisted mode is stale.
                 state = "unconfirmed"
                 self._unconfirmed(row, data.error or "The remote API adapter has not confirmed that its job ended.")
             elif data.state in {"stopped", "failed"}:

@@ -4,7 +4,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -86,8 +86,12 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
                  "features": ["peer-discovery", "capabilities", "versioned-profiles", "settings-schema", "health", "help-requests"]}
 
     @app.post("/api/login")
-    def login(data: LoginRequest):
-        return store.admin_session(data.username, data.password)
+    def login(data: LoginRequest, request: Request):
+        return store.admin_session(data.username, data.password, request.client.host if request.client else "unknown")
+
+    @app.post("/api/logout")
+    def logout(authorization: str | None = Header(default=None), p=Depends(principal)):
+        return store.revoke_session(authorization)
 
     @app.get("/api/me")
     def me(p=Depends(principal)):

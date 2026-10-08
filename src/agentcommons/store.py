@@ -1,6 +1,7 @@
 """Transactional collaboration state. Every mutation and its event commit together."""
 
 import hashlib
+import hmac
 import json
 import secrets
 import sqlite3
@@ -50,6 +51,7 @@ class Store:
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.admin_hash = hashlib.sha256(admin_token.encode()).hexdigest()
         self.admin_sessions = {}
+        self.login_attempts = {}
         self.lock = threading.RLock()
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None, timeout=15)
         self.db.row_factory = sqlite3.Row
@@ -135,9 +137,13 @@ class Store:
             fail(401, "A bearer token is required.")
         token = authorization[7:]
         now = time.time()
-        expires = self.admin_sessions.get(token)
-        if expires:
-            if expires >= now:
+        session = self.admin_sessions.get(token)
+        if session:
+            if isinstance(session, tuple):
+                expires, credential_fingerprint = session
+            else:
+                expires, credential_fingerprint = session, self.admin_credential_fingerprint()
+            if expires >= now and credential_fingerprint == self.admin_credential_fingerprint():
                 return Principal()
             self.admin_sessions.pop(token, None)
         digest = hashlib.sha256(token.encode()).hexdigest()
@@ -154,14 +160,48 @@ class Store:
             fail(401, "This identity has a managed run. Its worker uses a run-scoped token; connect other sessions as a separate teammate.")
         return Principal(agent["id"], agent["project_id"])
 
-    def admin_session(self, username, password):
-        configured_username = setting("ADMIN_USERNAME", "kali")
-        configured_password = setting("ADMIN_PASSWORD", "kali")
-        if not secrets.compare_digest(username, configured_username) or not secrets.compare_digest(password, configured_password):
+    @staticmethod
+    def admin_credentials():
+        username = setting("ADMIN_USERNAME")
+        password = setting("ADMIN_PASSWORD")
+        return (username, password) if username and password else None
+
+    def admin_credential_fingerprint(self):
+        credentials = self.admin_credentials()
+        if not credentials:
+            return None
+        return hashlib.sha256("\0".join(credentials).encode("utf-8")).hexdigest()
+
+    def admin_session(self, username, password, client_id="unknown"):
+        credentials = self.admin_credentials()
+        if not credentials:
+            fail(503, "Password login is not configured. Use an administrator or agent access token.")
+        configured_username, configured_password = credentials
+        now = time.time()
+        key = (client_id, username)
+        attempts = [stamp for stamp in self.login_attempts.get(key, []) if now - stamp < 60]
+        if len(attempts) >= 10:
+            self.login_attempts[key] = attempts
+            fail(429, "Too many login attempts. Try again in a minute.")
+        valid = hmac.compare_digest(username.encode("utf-8"), configured_username.encode("utf-8")) and hmac.compare_digest(
+            password.encode("utf-8"), configured_password.encode("utf-8")
+        )
+        if not valid:
+            attempts.append(now)
+            self.login_attempts[key] = attempts
             fail(401, "Invalid user ID or password.")
+        self.login_attempts.pop(key, None)
+        for token, (expires, _) in list(self.admin_sessions.items()):
+            if expires < now:
+                self.admin_sessions.pop(token, None)
         token = f"web_{secrets.token_urlsafe(32)}"
-        self.admin_sessions[token] = time.time() + 86400
+        self.admin_sessions[token] = (now + 86400, self.admin_credential_fingerprint())
         return {"token": token, "expires_in": 86400, "username": configured_username}
+
+    def revoke_session(self, authorization):
+        if authorization and authorization.startswith("Bearer "):
+            self.admin_sessions.pop(authorization[7:], None)
+        return {"ok": True}
 
     def admin_only(self, principal):
         if not principal.admin:
@@ -433,6 +473,9 @@ class Store:
                 fail(403, "Only the assignee or an administrator can release a task.")
             if task["status"] != "in_progress":
                 fail(409, "Only in-progress tasks can be released.")
+            runtime = self.runtimes.runtime(task["assignee_id"])
+            if principal.admin and runtime and runtime["state"] in ACTIVE_STATES:
+                fail(409, "Stop the managed worker and wait for its termination report before releasing this task.")
             self.runtimes.release_allowed(task["assignee_id"])
             self.db.execute("UPDATE tasks SET status='backlog',assignee_id=NULL,updated_at=? WHERE id=?",
                             (time.time(), task_id))
@@ -441,7 +484,8 @@ class Store:
 
     def finish_plan(self, principal, project_id, task_id, data: PlanFinish):
         with self.transaction():
-            self.project(principal, project_id, active=True)
+            # Pausing blocks new claims, but an already-owned task may finish safely.
+            self.project(principal, project_id)
             self.runtimes.can_claim(principal)
             task = self.owned_task(principal, project_id, task_id, "in_progress")
             if task["kind"] != "planning":
@@ -460,7 +504,8 @@ class Store:
 
     def submit_work(self, principal, project_id, task_id, data):
         with self.transaction():
-            self.project(principal, project_id, active=True)
+            # Pausing blocks new claims, but an already-owned task may finish safely.
+            self.project(principal, project_id)
             self.runtimes.can_claim(principal)
             task = self.owned_task(principal, project_id, task_id, "in_progress")
             if task["kind"] != "implementation":
@@ -505,7 +550,8 @@ class Store:
 
     def review_work(self, principal, project_id, task_id, data):
         with self.transaction():
-            self.project(principal, project_id, active=True)
+            # Pausing blocks new claims, but an already-owned review may finish safely.
+            self.project(principal, project_id)
             self.runtimes.can_claim(principal)
             task = self.task(principal, project_id, task_id)
             if principal.admin or task["reviewer_id"] != principal.agent_id:
