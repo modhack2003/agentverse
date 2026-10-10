@@ -9,7 +9,7 @@ export default defineConfig({
   },
   webServer: [
     { command: 'uv run --project .. agentverse serve --port 8000', url: 'http://127.0.0.1:8000/api/health', reuseExistingServer: false,
-      env: { AGENTVERSE_ADMIN_TOKEN: 'browser-test-only-token-not-a-secret', AGENTVERSE_DB: `/tmp/agentverse-browser-${process.pid}.db` } },
+      env: { AGENTVERSE_ADMIN_TOKEN: 'browser-test-only-token-not-a-secret', AGENTVERSE_DB: `/tmp/agentverse-browser-${process.pid}-${Date.now()}.db` } },
     { command: 'npm run dev -- --port 5173', url: 'http://127.0.0.1:5173', reuseExistingServer: false },
   ],
 })

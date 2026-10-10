@@ -121,6 +121,9 @@ class CommonsTUI(App):
         self.project_id = None
         self.snapshot = None
         self.is_admin = False
+        self.projects = []
+        self.project_refresh_pending = False
+        self.history_generation = 0  # Distinguish separate visits to the same conversation.
         self.chat_messages = []
         self.chat_key = None
         self.chat_has_older = False
@@ -171,30 +174,47 @@ class CommonsTUI(App):
             await self.load_projects()
         except Exception as exc:
             self.notify(str(exc), severity="error", timeout=10)
-        self.set_interval(4, self.refresh_remote)
+        self.set_interval(4, self.periodic_refresh)
 
     async def on_unmount(self):
         await self.http.aclose()
 
-    async def load_projects(self):
-        projects = await self.call("GET", "/api/projects")
+    def periodic_refresh(self):
+        # A slow multi-page refresh must finish instead of being cancelled by
+        # the next polling tick. Explicit project/target changes still cancel it.
+        if not any(worker.name == "refresh_remote" and not worker.is_finished for worker in self.workers):
+            self.refresh_remote()
+
+    def select_project(self, project_id):
+        if project_id != self.project_id:
+            self.history_generation += 1
+            self.chat_messages, self.chat_key, self.chat_has_older = [], None, False
+            self.help_requests, self.help_has_older = [], False
+        self.project_id = project_id
+
+    def show_projects(self, projects):
+        self.projects = projects
         select = self.query_one("#project-select", Select)
         select.set_options([(p["name"], p["id"]) for p in projects])
         if projects:
-            self.project_id = self.project_id if any(p["id"] == self.project_id for p in projects) else projects[0]["id"]
+            self.select_project(self.project_id if any(p["id"] == self.project_id for p in projects) else projects[0]["id"])
             select.value = self.project_id
+
+    async def load_projects(self, refresh=True):
+        self.show_projects(await self.call("GET", "/api/projects"))
+        self.project_refresh_pending = False
+        if refresh and self.project_id:
             self.refresh_remote()
 
     @on(Select.Changed, "#project-select")
     def project_changed(self, event):
         if event.value is not Select.BLANK:
-            self.project_id = event.value
-            self.chat_messages, self.chat_key, self.chat_has_older = [], None, False
-            self.help_requests, self.help_has_older = [], False
+            self.select_project(event.value)
             self.refresh_remote()
 
     @on(Select.Changed, "#chat-target")
     def target_changed(self, event):
+        self.history_generation += 1
         self.chat_messages, self.chat_key, self.chat_has_older = [], None, False
         self.refresh_remote()
 
@@ -219,12 +239,29 @@ class CommonsTUI(App):
         rows = {row["id"]: row for row in [*current, *incoming]}
         return sorted(rows.values(), key=lambda row: (row.get("created_at", 0), row["id"]))
 
+    async def history_since(self, fetch_page, anchor=None, newest_first=False):
+        """Bridge the recent page back to the previously loaded window."""
+        rows, before = [], None
+        while True:
+            page = await fetch_page(before)
+            rows.extend(page)
+            if not anchor or len(page) < 100 or any(row["id"] == anchor for row in page):
+                return rows, len(page) == 100
+            before = page[-1 if newest_first else 0]["id"]
+
     async def load_older_chat(self):
         if not self.project_id or not self.chat_messages:
             return
         try:
-            page = await self.chat_page(self.project_id, self.query_one("#chat-target", Select).value,
-                                        self.chat_messages[0]["id"])
+            project_id, target = self.project_id, self.query_one("#chat-target", Select).value
+            key = self.chat_key
+            generation = self.history_generation
+            page = await self.chat_page(project_id, target, self.chat_messages[0]["id"])
+            if (
+                generation != self.history_generation or key != self.chat_key
+                or (project_id, target) != (self.project_id, self.query_one("#chat-target", Select).value)
+            ):
+                return
             self.chat_messages = self.merge_rows(page, self.chat_messages)
             self.chat_has_older = len(page) == 100
             self.refresh_remote()
@@ -235,7 +272,11 @@ class CommonsTUI(App):
         if not self.project_id or not self.help_requests:
             return
         try:
-            page = await self.help_page(self.project_id, self.help_requests[-1]["id"])
+            project_id = self.project_id
+            generation = self.history_generation
+            page = await self.help_page(project_id, self.help_requests[-1]["id"])
+            if generation != self.history_generation or project_id != self.project_id:
+                return
             rows = {row["id"]: row for row in [*self.help_requests, *page]}
             self.help_requests = sorted(rows.values(), key=lambda row: (row.get("created_at", 0), row["id"]), reverse=True)
             self.help_has_older = len(page) == 100
@@ -248,6 +289,11 @@ class CommonsTUI(App):
         if not self.project_id or isinstance(self.screen, ModalScreen):
             return
         try:
+            if self.project_refresh_pending:
+                try:
+                    await self.load_projects(refresh=False)
+                except Exception:
+                    pass  # Keep retrying the GET without replaying the saved mutation.
             project_id = self.project_id
             data = await self.call("GET", f"/api/projects/{project_id}/snapshot")
             if project_id != self.project_id or isinstance(self.screen, ModalScreen):
@@ -296,16 +342,27 @@ class CommonsTUI(App):
             if self.chat_key != key:
                 self.chat_messages, self.chat_key, self.chat_has_older = [], key, False
             had_chat_history = bool(self.chat_messages)
-            latest_chat = await self.chat_page(project_id, target)
+            generation = self.history_generation
+            chat_anchor = self.chat_messages[-1]["id"] if had_chat_history else None
+            latest_chat, chat_has_older = await self.history_since(
+                lambda before: self.chat_page(project_id, target, before), chat_anchor)
+            had_help_history = bool(self.help_requests)
+            # Help state/answers can change on older rows already on screen.
+            # Refresh the whole loaded window, not just its newest boundary.
+            help_anchor = self.help_requests[-1]["id"] if had_help_history else None
+            latest_help, help_has_older = await self.history_since(
+                lambda before: self.help_page(project_id, before), help_anchor, newest_first=True)
+            if (
+                generation != self.history_generation or project_id != self.project_id
+                or self.chat_key != key or target_select.value != target or isinstance(self.screen, ModalScreen)
+            ):
+                return
             self.chat_messages = self.merge_rows(self.chat_messages, latest_chat)
             if not had_chat_history:
-                self.chat_has_older = len(latest_chat) == 100
-            had_help_history = bool(self.help_requests)
-            latest_help = await self.help_page(project_id)
+                self.chat_has_older = chat_has_older
             rows = {row["id"]: row for row in [*self.help_requests, *latest_help]}
             self.help_requests = sorted(rows.values(), key=lambda row: (row.get("created_at", 0), row["id"]), reverse=True)
-            if not had_help_history:
-                self.help_has_older = len(latest_help) == 100
+            self.help_has_older = help_has_older
             log = self.query_one("#chat", RichLog)
             log.clear()
             for message in self.chat_messages:
@@ -374,23 +431,30 @@ class CommonsTUI(App):
                     from urllib.parse import quote
                     route = route.replace("{issue_id}", quote(data.pop("issue_id"), safe=""))
                 result = await self.call(method, route, {**data, **(extra or {})})
-                if secret:
-                    self.push_screen(DetailScreen(f"CONNECTION TOKEN — save this now, shown once\n\n{result['token']}\n\n"
-                        f"MCP endpoint: {self.server}/mcp/\nEditors/apps: attach MCP, call announce_peer and list_teammates, heartbeat every 25s.\n"
-                        "Managed tools: prepare a node config; run agentverse doctor and agentverse node.\n"
-                        "A node token connects the supervisor; a teammate token connects one agent.\nSee docs/agents.md and docs/remote-control.md."))
-                    return
-                await self.load_projects()
-                self.refresh_remote()
-                self.notify("Saved to your shared workspace.")
             except Exception as exc:
                 self.notify(str(exc), severity="error", timeout=10)
-                # Reopen the form with the submitted values so conflicts and
-                # transient failures never destroy a user's terminal draft.
-                if not secret:
-                    restored = [(key, label, multiline, draft.get(key, ""))
-                                for key, label, multiline, _ in fields]
-                    self.form(title, restored, path, method, extra, secret)
+                restored = [(key, label, multiline, draft.get(key, ""))
+                            for key, label, multiline, _ in fields]
+                self.form(title, restored, path, method, extra, secret)
+                return
+            # The mutation succeeded. Refresh/token presentation failures must
+            # never reopen a creation form and invite a duplicate POST.
+            if secret:
+                self.push_screen(DetailScreen(f"CONNECTION TOKEN — save this now, shown once\n\n{result['token']}\n\n"
+                    f"MCP endpoint: {self.server}/mcp/\nEditors/apps: attach MCP, call announce_peer and list_teammates, heartbeat every 25s.\n"
+                    "Managed tools: prepare a node config; run agentverse doctor and agentverse node.\n"
+                    "A node token connects the supervisor; a teammate token connects one agent.\nSee docs/agents.md and docs/remote-control.md."))
+                return
+            if method == "POST" and path == "/api/projects":
+                self.select_project(result["id"])
+                self.show_projects([*self.projects, result])
+            try:
+                await self.load_projects()
+            except Exception as exc:
+                self.project_refresh_pending = True
+                self.notify(f"Saved successfully; workspace refresh failed and will retry. {exc}", severity="warning", timeout=10)
+            self.refresh_remote()
+            self.notify("Saved to your shared workspace.")
         self.push_screen(FormScreen(title, fields), submit)
 
     def action_new_project(self):

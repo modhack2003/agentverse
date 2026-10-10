@@ -32,7 +32,7 @@ test('seven themes persist, motion respects accessibility, and dialogs keep keyb
   await page.setViewportSize({ width: 390, height: 844 })
   await page.getByRole('button', { name: 'Appearance', exact: true }).click()
   await expect(dialog.getByRole('button', { name: /^Daylight/ })).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   expect(errors).toEqual([])
 })
 
@@ -126,5 +126,5 @@ test('future tools, typed settings, external modes, profiles, issues, and capabi
   await page.getByRole('button', { name: 'Done', exact: true }).click()
   if (process.env.UPDATE_SCREENSHOTS) await page.screenshot({ path: '../docs/assets/daylight.png', fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })

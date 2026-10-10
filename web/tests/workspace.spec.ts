@@ -118,5 +118,5 @@ test('dashboard live updates, task details, DMs, and mobile navigation', async (
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: 'Task board', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Task board' })).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })

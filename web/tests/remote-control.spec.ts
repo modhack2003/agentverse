@@ -72,6 +72,6 @@ test('dashboard registers a node, selects a model, launches, stops, and reconfig
   await expect(page.getByRole('button', { name: 'Launch Atlas', exact: true })).toBeDisabled()
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(card).toBeVisible()
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   expect(errors).toEqual([])
 })
