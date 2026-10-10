@@ -97,6 +97,8 @@ function Chat({ snapshot, token, reload, full = false, initialRecipient = '' }: 
   const [content, setContent] = useState(''), [target, setTarget] = useState(initialRecipient || '#general'), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [history, setHistory] = useState<{ key: string; messages: Message[]; hasOlder: boolean }>({ key: '', messages: [], hasOlder: false })
   const [historyBusy, setHistoryBusy] = useState(false), [loading, setLoading] = useState(false)
+  const [historyRefresh, setHistoryRefresh] = useState(0)
+  const historyRef = useRef(history); historyRef.current = history
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const valid = initialRecipient && snapshot.agents.some(agent => agent.id === initialRecipient) ? initialRecipient : '#general'
@@ -114,14 +116,28 @@ function Chat({ snapshot, token, reload, full = false, initialRecipient = '' }: 
   useEffect(() => {
     let cancelled = false
     setLoading(true); setError('')
-    api<Message[]>(token, `/projects/${snapshot.project.id}/messages?limit=100&${query}`).then(page => {
-      if (cancelled) return
-      setHistory(current => current.key === conversationKey
-        ? { ...current, messages: merge([...current.messages, ...page]) }
-        : { key: conversationKey, messages: page, hasOlder: page.length === 100 })
-    }).catch(e => { if (!cancelled) setError(e.message) }).finally(() => { if (!cancelled) setLoading(false) })
+    async function refreshHistory() {
+      const previous = historyRef.current
+      const anchor = previous.key === conversationKey ? previous.messages.at(-1)?.id : undefined
+      const rows: Message[] = []
+      let before = '', page: Message[]
+      do {
+        page = await api<Message[]>(token, `/projects/${snapshot.project.id}/messages?limit=100&${query}${before ? `&before=${encodeURIComponent(before)}` : ''}`)
+        if (cancelled) return
+        rows.push(...page)
+        before = page[0]?.id || ''
+        // A recent page may be separated from our loaded window by a reconnect gap.
+        // Bridge it before merging, rather than skipping straight to the oldest cursor.
+      } while (anchor && page.length === 100 && !page.some(message => message.id === anchor))
+      setHistory(current => {
+        const continuing = current.key === conversationKey && current.messages.length > 0
+        return { key: conversationKey, messages: merge([...(continuing ? current.messages : []), ...rows]),
+          hasOlder: page.length === 100 && (continuing ? current.hasOlder : true) }
+      })
+    }
+    void refreshHistory().catch(e => { if (!cancelled) setError(e.message) }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [token, conversationKey, snapshot.cursor])
+  }, [token, conversationKey, snapshot.cursor, historyRefresh])
   async function loadHistory() {
     if (historyBusy) return
     setHistoryBusy(true)
@@ -138,9 +154,10 @@ function Chat({ snapshot, token, reload, full = false, initialRecipient = '' }: 
     e.preventDefault(); if (!content.trim() || busy) return; setBusy(true); setError('')
     try {
       if (dm && target !== 'human' && !snapshot.agents.some(agent => agent.id === target)) { setTarget('#general'); throw new Error('That teammate is not part of the current project.') }
-      const saved = await api<Message>(token, `/projects/${snapshot.project.id}/messages`, 'POST', { content: content.trim(), channel: dm ? 'general' : target.slice(1), recipient_id: dm ? target : null })
+      await api<Message>(token, `/projects/${snapshot.project.id}/messages`, 'POST', { content: content.trim(), channel: dm ? 'general' : target.slice(1), recipient_id: dm ? target : null })
       if (activeConversation.current !== conversationKey) return
-      setContent(''); setHistory(current => current.key === conversationKey ? { ...current, messages: merge([...current.messages, saved]) } : { key: conversationKey, messages: [saved], hasOlder: false })
+      // Fetch through the server window so a sent message cannot conceal a gap.
+      setContent(''); setHistoryRefresh(current => current + 1)
       await reload().catch(() => setError('Message sent; workspace refresh failed. Live updates will retry.'))
     }
     catch (e) { setError((e as Error).message) } finally { setBusy(false) }

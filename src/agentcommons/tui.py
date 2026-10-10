@@ -2,6 +2,7 @@
 
 import httpx
 import json
+from urllib.parse import urlencode
 from rich.markup import escape
 from textual import on, work
 from textual.app import App, ComposeResult
@@ -120,6 +121,11 @@ class CommonsTUI(App):
         self.project_id = None
         self.snapshot = None
         self.is_admin = False
+        self.chat_messages = []
+        self.chat_key = None
+        self.chat_has_older = False
+        self.help_requests = []
+        self.help_has_older = False
 
     def compose(self):
         yield Header(show_clock=True)
@@ -133,7 +139,8 @@ class CommonsTUI(App):
             with TabPane("Conversation", id="chat-tab"):
                 yield RichLog(id="chat", wrap=True, markup=True)
                 with Horizontal(id="chat-controls"):
-                    yield Select([("# general", "")], value="", allow_blank=False, id="chat-target")
+                    yield Select([("# general", "#general"), ("# engineering", "#engineering"), ("# reviews", "#reviews")], value="#general", allow_blank=False, id="chat-target")
+                    yield Button("Older messages", id="older-chat")
                     yield Input(placeholder="Talk to your team…", id="chat-input")
                     yield Button("Send", id="send", variant="success")
             with TabPane("Team", id="agents-tab"):
@@ -146,6 +153,7 @@ class CommonsTUI(App):
                 yield RichLog(id="activity", wrap=True, markup=True)
             with TabPane("Health & help", id="health-tab"):
                 yield RichLog(id="health", wrap=True, markup=False)
+                yield Button("Older help", id="older-help")
         yield Footer()
 
     async def call(self, method, path, data=None):
@@ -181,11 +189,59 @@ class CommonsTUI(App):
     def project_changed(self, event):
         if event.value is not Select.BLANK:
             self.project_id = event.value
+            self.chat_messages, self.chat_key, self.chat_has_older = [], None, False
+            self.help_requests, self.help_has_older = [], False
             self.refresh_remote()
 
     @on(Select.Changed, "#chat-target")
-    def target_changed(self):
+    def target_changed(self, event):
+        self.chat_messages, self.chat_key, self.chat_has_older = [], None, False
         self.refresh_remote()
+
+    async def chat_page(self, project_id, target, before=None):
+        params = {"limit": 100}
+        if target.startswith("#"):
+            params["channel"] = target[1:]
+        elif target:
+            params["recipient_id"] = target
+        if before:
+            params["before"] = before
+        return await self.call("GET", f"/api/projects/{project_id}/messages?{urlencode(params)}")
+
+    async def help_page(self, project_id, before=None):
+        params = {"limit": 100, "state": "all"}
+        if before:
+            params["before"] = before
+        return await self.call("GET", f"/api/projects/{project_id}/help?{urlencode(params)}")
+
+    @staticmethod
+    def merge_rows(current, incoming):
+        rows = {row["id"]: row for row in [*current, *incoming]}
+        return sorted(rows.values(), key=lambda row: (row.get("created_at", 0), row["id"]))
+
+    async def load_older_chat(self):
+        if not self.project_id or not self.chat_messages:
+            return
+        try:
+            page = await self.chat_page(self.project_id, self.query_one("#chat-target", Select).value,
+                                        self.chat_messages[0]["id"])
+            self.chat_messages = self.merge_rows(page, self.chat_messages)
+            self.chat_has_older = len(page) == 100
+            self.refresh_remote()
+        except Exception as exc:
+            self.notify(str(exc), severity="error")
+
+    async def load_older_help(self):
+        if not self.project_id or not self.help_requests:
+            return
+        try:
+            page = await self.help_page(self.project_id, self.help_requests[-1]["id"])
+            rows = {row["id"]: row for row in [*self.help_requests, *page]}
+            self.help_requests = sorted(rows.values(), key=lambda row: (row.get("created_at", 0), row["id"]), reverse=True)
+            self.help_has_older = len(page) == 100
+            self.refresh_remote()
+        except Exception as exc:
+            self.notify(str(exc), severity="error")
 
     @work(exclusive=True)
     async def refresh_remote(self):
@@ -228,22 +284,31 @@ class CommonsTUI(App):
                     table.move_cursor(row=min(cursor, table.row_count - 1))
             target_select = self.query_one("#chat-target", Select)
             current = target_select.value
-            options = [("# general", "")] + [(a["name"], a["id"]) for a in agents.values() if a["id"] != data["identity"]["actor_id"]]
+            options = [("# general", "#general"), ("# engineering", "#engineering"), ("# reviews", "#reviews")] + [(a["name"], a["id"]) for a in agents.values() if a["id"] != data["identity"]["actor_id"]]
             if not self.is_admin:
                 options.append(("Workspace owner", "human"))
             if [(str(label), value) for label, value in options] != getattr(self, "_chat_options", None):
                 self._chat_options = options
                 target_select.set_options(options)
-                target_select.value = current if current in [value for _, value in options] else ""
+                target_select.value = current if current in [value for _, value in options] else "#general"
             target = target_select.value
+            key = (project_id, target)
+            if self.chat_key != key:
+                self.chat_messages, self.chat_key, self.chat_has_older = [], key, False
+            had_chat_history = bool(self.chat_messages)
+            latest_chat = await self.chat_page(project_id, target)
+            self.chat_messages = self.merge_rows(self.chat_messages, latest_chat)
+            if not had_chat_history:
+                self.chat_has_older = len(latest_chat) == 100
+            had_help_history = bool(self.help_requests)
+            latest_help = await self.help_page(project_id)
+            rows = {row["id"]: row for row in [*self.help_requests, *latest_help]}
+            self.help_requests = sorted(rows.values(), key=lambda row: (row.get("created_at", 0), row["id"]), reverse=True)
+            if not had_help_history:
+                self.help_has_older = len(latest_help) == 100
             log = self.query_one("#chat", RichLog)
             log.clear()
-            for message in data["messages"]:
-                if target:
-                    if not message["recipient_id"] or target not in (message["recipient_id"], message["sender_id"]):
-                        continue
-                elif message["recipient_id"] or message["channel"] != "general":
-                    continue
+            for message in self.chat_messages:
                 log.write(f"[bold #b6a0ef]{escape(name(message['sender_id']))}[/]\n{escape(message['content'])}\n")
             for log_id, rows in [("reviews", data["reviews"]), ("activity", data["events"][-30:])]:
                 log = self.query_one(f"#{log_id}", RichLog)
@@ -260,8 +325,10 @@ class CommonsTUI(App):
             for issue in data["issues"]:
                 if not issue["resolved"]:
                     health.write(f"\n{issue['id']} · {issue['severity'].upper()} · {name(issue['agent_id'])} · {issue['title']}\n{issue['detail']}")
-            for request in data["help_requests"][:20]:
+            for request in self.help_requests:
                 health.write(f"\n{request['state']} · {request['capability'] or 'general'} · {name(request['sender_id'])}\n{request['question']}\n{request['answer'] or 'Waiting for a matching teammate.'}")
+            self.query_one("#older-chat", Button).disabled = not self.chat_has_older
+            self.query_one("#older-help", Button).disabled = not self.help_has_older
         except Exception as exc:
             self.notify(str(exc), severity="error")
 
@@ -273,16 +340,27 @@ class CommonsTUI(App):
             return
         try:
             await self.call("POST", f"/api/projects/{self.project_id}/messages", {
-                "content": widget.value.strip(), "recipient_id": self.query_one("#chat-target", Select).value or None})
+                "content": widget.value.strip(),
+                "channel": self.query_one("#chat-target", Select).value[1:] if self.query_one("#chat-target", Select).value.startswith("#") else "general",
+                "recipient_id": None if self.query_one("#chat-target", Select).value.startswith("#") else self.query_one("#chat-target", Select).value})
             widget.value = ""
             self.refresh_remote()
         except Exception as exc:
             self.notify(str(exc), severity="error")
 
+    @on(Button.Pressed, "#older-chat")
+    async def older_chat(self):
+        await self.load_older_chat()
+
+    @on(Button.Pressed, "#older-help")
+    async def older_help(self):
+        await self.load_older_help()
+
     def form(self, title, fields, path, method="POST", extra=None, secret=False):
         async def submit(data):
             if data is None:
                 return
+            draft = dict(data)
             try:
                 for key in ("tags", "capabilities", "required_capabilities"):
                     if key in data:
@@ -307,6 +385,12 @@ class CommonsTUI(App):
                 self.notify("Saved to your shared workspace.")
             except Exception as exc:
                 self.notify(str(exc), severity="error", timeout=10)
+                # Reopen the form with the submitted values so conflicts and
+                # transient failures never destroy a user's terminal draft.
+                if not secret:
+                    restored = [(key, label, multiline, draft.get(key, ""))
+                                for key, label, multiline, _ in fields]
+                    self.form(title, restored, path, method, extra, secret)
         self.push_screen(FormScreen(title, fields), submit)
 
     def action_new_project(self):

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from textual.widgets import DataTable, Input, TabbedContent, TextArea
 
-from agentcommons.tui import CommonsTUI
+from agentcommons.tui import CommonsTUI, FormScreen
 from agentcommons.worker import Worker, result_json
 from conftest import TOKEN, agent, project
 
@@ -71,6 +71,58 @@ def test_tui_loads_remote_data_and_sends_chat(live_server):
             await app.send()
             await pilot.pause(0.3)
             assert client.get(f"/api/projects/{p}/messages").json()[0]["content"] == "A handoff from the terminal"
+        await app.http.aclose()
+
+    asyncio.run(pilot_test())
+
+
+def test_tui_paginates_history_and_restores_conflicted_memory_draft(live_server):
+    url, client = live_server
+    p = project(client)
+    for index in range(105):
+        response = client.post(f"/api/projects/{p}/messages", json={"content": f"terminal history {index}"})
+        assert response.status_code == 201
+        response = client.post(f"/api/projects/{p}/help", json={"question": f"help request {index}"})
+        assert response.status_code == 200
+
+    async def pilot_test():
+        app = CommonsTUI(url, TOKEN)
+        async with app.run_test(size=(130, 45)) as pilot:
+            await pilot.pause(1)
+            assert len(app.chat_messages) == 100
+            assert len(app.help_requests) == 100
+            assert not app.query_one("#older-chat").disabled
+            assert not app.query_one("#older-help").disabled
+
+            await app.load_older_chat()
+            await app.load_older_help()
+            await pilot.pause(.5)
+            assert len(app.chat_messages) == 200
+            assert len(app.help_requests) == 105
+            assert not app.query_one("#older-chat").disabled
+            assert app.query_one("#older-help").disabled
+            await app.load_older_chat()
+            await pilot.pause(.3)
+            assert len(app.chat_messages) == 210
+            assert app.query_one("#older-chat").disabled
+
+            memory = client.post(f"/api/projects/{p}/memories", json={
+                "title": "Draft memory", "content": "Original", "tags": []}).json()
+            assert client.put(f"/api/projects/{p}/memories/{memory['id']}", json={
+                "title": "Server edit", "content": "Server edit", "tags": [], "expected_version": 1}).status_code == 200
+            app.form("Update shared memory", [
+                ("title", "Title", False, "Draft title"),
+                ("content", "Shared knowledge", True, "Draft content"),
+                ("tags", "Tags", False, "terminal")],
+                f"/api/projects/{p}/memories/{memory['id']}", "PUT", {"expected_version": 1})
+            await pilot.pause(.2)
+            app.screen.query_one("#field-title").value = "My preserved title"
+            app.screen.query_one("#field-content").text = "My preserved content"
+            await pilot.click("#save")
+            await pilot.pause(.5)
+            assert isinstance(app.screen, FormScreen)
+            assert app.screen.query_one("#field-title").value == "My preserved title"
+            assert app.screen.query_one("#field-content").text == "My preserved content"
         await app.http.aclose()
 
     asyncio.run(pilot_test())
