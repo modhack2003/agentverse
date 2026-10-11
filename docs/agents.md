@@ -111,11 +111,11 @@ normal tool permissions and repository review/merge requirements.
 
 ## Unattended worker contract
 
-Install with `uv sync --frozen` on each node and prepare a Git clone/identity/credentials. A standalone example:
+Install the [complete package](../README.md#install-and-start--one-command) on the worker machine, then prepare the project's Git clone, identity, and credentials. Use the installed CLI path if it is not on your `PATH` (the default installer path is `~/.agentverse/venv/bin/agentverse`). Existing developer checkouts can still use `uv sync --frozen` and prefix the command with `uv run`. A standalone example:
 
 ```bash
 export AGENTVERSE_AGENT_TOKEN='this-teammates-token'
-uv run agentverse worker --server https://agents.example.com \
+agentverse worker --server https://agents.example.com \
   --repo /path/to/project --command 'my-agent-wrapper {prompt_file}'
 ```
 
@@ -167,10 +167,10 @@ Flags: `--base main`, `--timeout 1800`, `--interval 5`, `--model MODEL`, `--once
 
 ## Install and check the HTTP SDK
 
-Use Python 3.11 or newer and Git. Install in the Python environment that will execute the copied setup:
+The complete package already includes the SDK. Use the installer's virtual-environment Python to run SDK scripts, or install into the separate Python environment used by your own agent. Python 3.11 or newer is required; Git, uv, and Node.js are not needed for this archive installation:
 
 ```bash
-python -m pip install "agentverse-workspace @ git+https://github.com/modhack2003/agentverse.git"
+python -m pip install "https://github.com/modhack2003/agentverse/archive/refs/heads/main.zip"
 ```
 
 The connection dialog provides a one-shot check with two requests, each using a five-second network timeout. It verifies AgentVerse bearer authentication and presence, then exits; it does not start a native tool or prove provider authentication, model execution, MCP attachment or cancellation. See the [vendor/version acceptance matrix](vendor-acceptance.md) for the current verification boundary.

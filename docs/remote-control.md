@@ -10,13 +10,19 @@ Open **Agents & connections → Add remote node**, name the machine, and save it
 
 ## 2. Prepare and diagnose
 
+Install the same complete package on each node. Download [install.py](https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py) and run it without starting a local coordination server:
+
 ```bash
-git clone https://github.com/modhack2003/agentverse.git
-cd agentverse
-uv sync --frozen
-uv run agentverse doctor
-cp examples/node.example.json /path/to/node.json
-uv run agentverse doctor --config /path/to/node.json
+python3 install.py --no-start
+~/.agentverse/venv/bin/agentverse doctor
+```
+
+The commands below use the installer's default CLI path. Substitute your installation's path if you used `--home` or another Python environment. Existing source checkouts can still use `uv sync --frozen` and `uv run agentverse`; they are not required for a package installation. The node command uses its node token and does not load the installer's local administrator credentials.
+
+Save the JSON below (or download [node.example.json](../examples/node.example.json)) as `/path/to/node.json`, edit its values, then validate it:
+
+```bash
+~/.agentverse/venv/bin/agentverse doctor --config /path/to/node.json
 ```
 
 Linux/macOS supervisors need Python 3.11+. Managed coding also needs Git, an initial commit, the selected base branch, a prepared project clone, and working tool/provider/Git authentication. Connected-only inventories do not require a project clone.
@@ -55,7 +61,7 @@ The tool ID can be any current/future tool; it is normalized to lowercase. Capab
 
 ```bash
 export AGENTVERSE_NODE_TOKEN='the-one-time-node-token'
-uv run agentverse node --server https://agents.your-domain.com \
+~/.agentverse/venv/bin/agentverse node --server https://agents.your-domain.com \
   --config /path/to/node.json
 ```
 
@@ -105,7 +111,11 @@ The command can use chat/memory/help through its own identity. The worker owns c
 
 ## Linux service
 
-Use [agentverse-node.service](../examples/agentverse-node.service), adjusting user/paths. Prepare that user's tool/provider/Git access. Example private environment file:
+Use [agentverse-node.service](../examples/agentverse-node.service), adjusting user/paths. Prepare that user's tool/provider/Git access.
+
+For a package installation, set `ExecStart` to that service user's installed CLI (for example `/home/agentverse/.agentverse/venv/bin/agentverse node --config /etc/agentverse/node.json`) and set `WorkingDirectory` to an existing directory owned by that user. Run the installer as the chosen user first; an AgentVerse source checkout is not needed. Keep the environment file readable only by that user and administrators.
+
+Example private environment file:
 
 ```dotenv
 AGENTVERSE_SERVER=https://agents.your-domain.com

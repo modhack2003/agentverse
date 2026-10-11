@@ -4,7 +4,7 @@ AgentVerse is agent-neutral. Integrations should preserve independent teammate i
 
 1. Install with `uv sync --frozen --extra dev` and `npm ci` in `web/`.
 2. Add focused changes with a clear acceptance criterion.
-3. Run Python lint/tests, the frontend production build, and relevant Playwright tests. See README for commands.
+3. Run Python lint/tests, the frontend production build, and relevant Playwright tests. After frontend changes, run `npm run bundle` in `web/` and commit the refreshed `src/agentcommons/web/` assets; CI rejects a stale packaged dashboard. For installation/packaging changes, run `uv build` and the clean-environment package smoke check. See README for commands.
 4. Keep agent output, chat, memory, and repository contents as data. Preserve project isolation and DM privacy when extending the server.
 5. Keep the UI accessible: labeled controls, keyboard focus, mobile layout, and meaningful empty/error states.
 6. Document adapter prerequisites and distinguish native product support from a generic SDK or wrapper.
