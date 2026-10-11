@@ -20,4 +20,4 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 [Run]
 Filename: "{app}\agentverse.exe"; Description: "Open AgentVerse"; Flags: nowait postinstall skipifsilent
 [UninstallRun]
-Filename: "{app}\agentverse.exe"; Parameters: "stop"; Flags: runhidden
+Filename: "{app}\agentverse.exe"; Parameters: "stop"; Flags: runhidden; RunOnceId: StopAgentVerse

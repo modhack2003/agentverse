@@ -250,7 +250,7 @@ def diagnostics(home, config=None):
     return report
 
 
-def deferred_windows_cleanup(paths):
+def deferred_windows_cleanup(paths, home):
     # A selected runtime cannot delete its loaded EXE/DLLs on Windows. A detached
     # OS helper waits for this CLI to exit, then removes only installer-owned paths.
     encoded_paths = base64.b64encode(json.dumps([str(path) for path in paths]).encode()).decode()
@@ -258,13 +258,15 @@ def deferred_windows_cleanup(paths):
               f"$paths = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_paths}')) | ConvertFrom-Json; "
               "foreach ($path in $paths) { for ($i=0; $i -lt 30; $i++) { "
               "try { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }; break } "
-              "catch { Start-Sleep -Seconds 1 } } }")
+              "catch { Write-Output $_; Start-Sleep -Seconds 1 } } }")
     powershell = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
-    with external_loader():
+    log = home / 'uninstall-cleanup.log'
+    private_write(log, b'')
+    with external_loader(), log.open('ab', buffering=0) as output:
         subprocess.Popen([str(powershell), '-NoProfile', '-NonInteractive', '-EncodedCommand',
                           base64.b64encode(script.encode('utf-16le')).decode()],
-                         env=external_environment(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+                         env=external_environment(), cwd=str(powershell.parent), stdin=subprocess.DEVNULL, stdout=output,
+                         stderr=output, creationflags=subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP)
 
 
 def uninstall(home, delete_data=False):
@@ -284,7 +286,7 @@ def uninstall(home, delete_data=False):
                         raise
                     pending.append(path)
         if pending:
-            deferred_windows_cleanup(pending)
+            deferred_windows_cleanup(pending, home)
         (home / 'installation.json').unlink(missing_ok=True)
         if delete_data:
             for name in ('data', 'backups'):

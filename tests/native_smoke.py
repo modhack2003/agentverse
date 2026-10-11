@@ -176,7 +176,8 @@ def verify(executable, package_archive=None):
             assert result.returncode == 0, result.stdout + result.stderr
             deadline = time.monotonic() + 45
             while (home / 'versions').exists():
-                assert time.monotonic() < deadline, 'Deferred runtime removal did not finish.'
+                log = home / 'uninstall-cleanup.log'
+                assert time.monotonic() < deadline, 'Deferred runtime removal did not finish. ' + (log.read_text(errors='replace') if log.exists() else 'No cleanup log.')
                 time.sleep(.1)
         else:
             run('uninstall', '--home', home)

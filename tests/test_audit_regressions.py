@@ -97,7 +97,11 @@ def child_wrapper(tmp_path, completed=False):
         "import subprocess,sys,pathlib,time\n"
         f"p=subprocess.Popen([sys.executable,'-c',{child!r}],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
         f"pathlib.Path({str(pid_file)!r}).write_text(str(p.pid))\n"
-        "time.sleep(.25)\n" + ("print('{\"summary\":\"done\"}')\n" if completed else "time.sleep(60)\n")
+        f"heartbeat=pathlib.Path({str(heartbeat)!r})\n"
+        "deadline=time.monotonic()+5\n"
+        "while not heartbeat.exists() and time.monotonic()<deadline: time.sleep(.02)\n"
+        "assert heartbeat.exists(), 'descendant did not start'\n"
+        + ("print('{\"summary\":\"done\"}')\n" if completed else "time.sleep(60)\n")
     )
     return wrapper, heartbeat, pid_file
 
@@ -121,16 +125,16 @@ def kill_leftover(pid_file):
 def test_command_cleanup_escalates_ignoring_descendants(tmp_path, ending):
     wrapper, heartbeat, pid_file = child_wrapper(tmp_path, ending == "success")
     stop = threading.Event()
-    timer = threading.Timer(.7, stop.set)
+    timer = threading.Timer(6, stop.set)
     if ending == "stop":
         timer.start()
     try:
         command = shlex.join([sys.executable, str(wrapper)])
         if ending == "success":
-            assert execute_agent(command, "regression", tmp_path, 3)["summary"] == "done"
+            assert execute_agent(command, "regression", tmp_path, 10)["summary"] == "done"
         else:
             with pytest.raises(WorkerStopped if ending == "stop" else subprocess.TimeoutExpired):
-                execute_agent(command, "regression", tmp_path, 1, stop=stop)
+                execute_agent(command, "regression", tmp_path, 8, stop=stop)
         assert_heartbeat_stopped(heartbeat)
     finally:
         timer.cancel()

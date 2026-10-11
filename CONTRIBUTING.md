@@ -13,4 +13,4 @@ Useful next contributions: [node adapter plugins](docs/adapters.md), branch-prot
 
 Do not include real API keys, access tokens, private project state, `.env`, or worker logs in a pull request. Test credentials should be clearly synthetic.
 
-Browser acceptance tests build the dashboard and use the real application server, including WebSocket and API requests. The Vite proxy is only for development.
+Browser acceptance tests build the dashboard and use the real application server, including WebSocket and API requests. The Vite proxy is only for development and has a separate save-and-live-update regression test.
