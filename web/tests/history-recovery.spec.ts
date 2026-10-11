@@ -2,13 +2,15 @@ import { expect, test } from '@playwright/test'
 
 const root = 'http://127.0.0.1:8000/api'
 const token = 'browser-test-only-token-not-a-secret'
-const headers = { Authorization: `Bearer ${token}` }
+// Seeding pauses while the browser navigates. Avoid reusing an idle API fixture
+// socket at Uvicorn's keep-alive timeout; never retry a possibly committed POST.
+const headers = { Authorization: `Bearer ${token}`, Connection: 'close' }
 
 for (const initialCount of [0, 5, 105]) {
-  test(`conversation recovers a multi-page reconnect burst after ${initialCount} messages`, async ({ page, request }) => {
+  test(`conversation recovers a multi-page reconnect burst after ${initialCount} messages`, async ({ page, request }, testInfo) => {
     test.setTimeout(90000)
     const project = await request.post(`${root}/projects`, { headers, data: {
-      name: `History recovery ${initialCount}`, goal: 'Retain every message across reconnects', auto_plan: false,
+      name: `History recovery ${initialCount} run ${testInfo.repeatEachIndex}`, goal: 'Retain every message across reconnects', auto_plan: false,
     } }).then(response => response.json())
     for (let i = 0; i < initialCount; i++) {
       expect((await request.post(`${root}/projects/${project.id}/messages`, { headers, data: { content: `Before burst ${i}` } })).status()).toBe(201)
