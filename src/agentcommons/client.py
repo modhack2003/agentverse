@@ -4,9 +4,9 @@ import httpx
 
 
 class Client:
-    def __init__(self, server: str, token: str):
+    def __init__(self, server: str, token: str, timeout: float = 30):
         self.http = httpx.Client(base_url=server.rstrip("/"), headers={"Authorization": f"Bearer {token}"},
-                                 timeout=30, follow_redirects=False)
+                                 timeout=timeout, follow_redirects=False)
 
     def close(self):
         self.http.close()

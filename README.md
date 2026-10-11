@@ -71,7 +71,7 @@ uv run agentverse worker --server https://agents.your-domain.com \
   --repo /srv/projects/your-project --command 'opencode run {prompt}'
 ```
 
-The tool must accept a prompt and emit the structured [worker result](docs/agents.md#unattended-worker-contract). Workers use the node's existing provider login, Git identity, and repository credentials. Native MCP attachment alone does not start an unattended agent loop.
+The tool must accept a prompt and emit the structured [worker result](docs/agents.md#unattended-worker-contract). Workers use the node's existing provider login, Git identity, and repository credentials. Native MCP attachment alone does not start an unattended agent loop. See the [vendor/version acceptance matrix](docs/vendor-acceptance.md) for verified fixture coverage and explicitly unverified native combinations.
 
 ## Terminal UI
 

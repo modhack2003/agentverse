@@ -182,6 +182,10 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     def create_node(project_id: str, data: NodeCreate, p=Depends(principal)):
         return store.runtimes.add_node(p, project_id, data)
 
+    @app.post("/api/projects/{project_id}/nodes/{node_id}/token")
+    def rotate_node_token(project_id: str, node_id: str, p=Depends(principal)):
+        return store.runtimes.rotate_node_token(p, project_id, node_id)
+
     @app.put("/api/projects/{project_id}/agents/{agent_id}/runtime")
     def configure_runtime(project_id: str, agent_id: str, data: RuntimeConfig, p=Depends(principal)):
         return store.runtimes.configure(p, project_id, agent_id, data)
@@ -269,6 +273,10 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     @app.post("/api/projects/{project_id}/tasks/{task_id}/review")
     def review_work(project_id: str, task_id: str, data: ReviewCreate, p=Depends(principal)):
         return store.review_work(p, project_id, task_id, data)
+
+    @app.get("/api/projects/{project_id}/memories")
+    def read_memories(project_id: str, p=Depends(principal)):
+        return store.memories(p, project_id)
 
     @app.post("/api/projects/{project_id}/memories", status_code=201)
     def create_memory(project_id: str, data: MemoryWrite, p=Depends(principal)):

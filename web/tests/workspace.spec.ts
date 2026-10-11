@@ -1,3 +1,4 @@
+import { expectNoHorizontalOverflow } from './layout'
 import { expect, test } from '@playwright/test'
 
 const token = 'browser-test-only-token-not-a-secret'
@@ -118,5 +119,5 @@ test('dashboard live updates, task details, DMs, and mobile navigation', async (
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await page.getByRole('button', { name: 'Task board', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Task board' })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await expectNoHorizontalOverflow(page)
 })

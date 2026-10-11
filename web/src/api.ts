@@ -1,3 +1,7 @@
+export class ApiError extends Error {
+  constructor(message: string, public status: number) { super(message) }
+}
+
 export async function api<T>(token: string, path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(`/api${path}`, {
     method,
@@ -6,7 +10,7 @@ export async function api<T>(token: string, path: string, method = 'GET', body?:
   })
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: response.statusText }))
-    throw new Error(typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail))
+    throw new ApiError(typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail), response.status)
   }
   return response.json() as Promise<T>
 }

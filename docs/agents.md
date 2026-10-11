@@ -164,3 +164,13 @@ Use `changes_requested` for specific corrections. Reviewers must not change file
 Help-only invocations must not change or commit files. Idle workers can answer matching requests; disable with an advertised `respond_to_help: false` setting.
 
 Flags: `--base main`, `--timeout 1800`, `--interval 5`, `--model MODEL`, `--once`, `--no-push` (local testing; no remote integration). At least two independently active teammates are required for unattended coding plus peer review. Inspect local logs after a failure; do not silently retry a command with uncertain remote API execution.
+
+## Install and check the HTTP SDK
+
+Use Python 3.11 or newer and Git. Install in the Python environment that will execute the copied setup:
+
+```bash
+python -m pip install "agentverse-workspace @ git+https://github.com/modhack2003/agentverse.git"
+```
+
+The connection dialog provides a one-shot check with two requests, each using a five-second network timeout. It verifies AgentVerse bearer authentication and presence, then exits; it does not start a native tool or prove provider authentication, model execution, MCP attachment or cancellation. See the [vendor/version acceptance matrix](vendor-acceptance.md) for the current verification boundary.

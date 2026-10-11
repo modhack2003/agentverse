@@ -42,9 +42,11 @@ class RuntimeRegistry:
             CREATE INDEX IF NOT EXISTS runtimes_node ON agent_runtimes(node_id);
         """)
         for table, additions in {
-            "nodes": {"diagnostics": "TEXT NOT NULL DEFAULT '[]'", "capacity": "INTEGER NOT NULL DEFAULT 4", "protocol_version": "INTEGER NOT NULL DEFAULT 1"},
+            "nodes": {"diagnostics": "TEXT NOT NULL DEFAULT '[]'", "capacity": "INTEGER NOT NULL DEFAULT 4", "protocol_version": "INTEGER NOT NULL DEFAULT 1",
+                      "last_contact": "REAL NOT NULL DEFAULT 0"},
             "agent_runtimes": {"settings": "TEXT NOT NULL DEFAULT '{}'", "mode": "TEXT NOT NULL DEFAULT 'managed_cli'",
-                               "run_contract": "TEXT NOT NULL DEFAULT '{}'"},
+                               "run_contract": "TEXT NOT NULL DEFAULT '{}'", "recovery": "TEXT NOT NULL DEFAULT '{}'",
+                               "last_report_at": "REAL NOT NULL DEFAULT 0"},
         }.items():
             existing = {row["name"] for row in store.db.execute(f"PRAGMA table_info({table})")}
             for key, definition in additions.items():
@@ -56,6 +58,7 @@ class RuntimeRegistry:
         if row:
             row["settings"] = json.loads(row["settings"])
             row["run_contract"] = json.loads(row["run_contract"])
+            row["recovery"] = json.loads(row["recovery"])
         return row
 
     def node(self, project_id, node_id):
@@ -67,6 +70,7 @@ class RuntimeRegistry:
         row["profiles"] = [RuntimeProfile.model_validate(p).model_dump() for p in json.loads(row["profiles"])]
         row["diagnostics"] = json.loads(row["diagnostics"])
         row["online"] = time.time() - row["last_seen"] < NODE_LEASE_SECONDS
+        row["last_contact"] = max(row["last_contact"], row["last_seen"])
         return row
 
     def nodes(self, principal, project_id):
@@ -94,8 +98,27 @@ class RuntimeRegistry:
             fail(401, "Invalid node token.")
         return node
 
+    def rotate_node_token(self, principal, project_id, node_id):
+        self.store.admin_only(principal)
+        token = f"acn_{secrets.token_urlsafe(32)}"
+        with self.store.transaction():
+            self.store.project(principal, project_id)
+            node = self.node(project_id, node_id)
+            if node["online"]:
+                fail(409, "Stop the node service and wait for it to go offline before replacing its token.")
+            if any(row["state"] in ACTIVE_STATES for row in self.store.all(
+                "SELECT state FROM agent_runtimes WHERE node_id=?", (node_id,)
+            )):
+                fail(409, "Wait for all node runs to finish and confirm termination before replacing its token.")
+            self.store.db.execute("UPDATE nodes SET token_hash=?,session_id=NULL,last_contact=MAX(last_contact,last_seen),last_seen=0 WHERE id=?",
+                                  (hashlib.sha256(token.encode()).hexdigest(), node_id))
+            self.store.event(project_id, "node.token_rotated", principal, node_id, "Replaced remote node token")
+        return {"node": self.node(project_id, node_id), "token": token}
+
     def _session(self, node, session_id):
         current = self.store.one("SELECT * FROM nodes WHERE id=?", (node["id"],))
+        if current["token_hash"] != node["token_hash"]:
+            fail(401, "This node token has been replaced.")
         if current["session_id"] != session_id:
             fail(409, "This node session no longer owns the connection. Register again.")
         return current
@@ -105,6 +128,8 @@ class RuntimeRegistry:
             fail(426, f"Unsupported node protocol. AgentVerse supports version {PROTOCOL_VERSION}.")
         with self.store.transaction():
             current = self.store.one("SELECT * FROM nodes WHERE id=?", (node["id"],))
+            if current["token_hash"] != node["token_hash"]:
+                fail(401, "This node token has been replaced.")
             incoming = {p.id: execution_contract(p.model_dump()) for p in data.profiles}
             for row in self.store.all("SELECT * FROM agent_runtimes WHERE node_id=?", (node["id"],)):
                 if row["state"] in ACTIVE_STATES:
@@ -227,7 +252,7 @@ class RuntimeRegistry:
                 fail(409, "This teammate still has an active help request. Release or answer it before launching.")
             self.store.db.execute(
                 "UPDATE agent_runtimes SET desired_state='running',state='queued',run_id=?,pid=NULL,"
-                "mode=?,run_contract=?,settings=?,error='',updated_at=? WHERE agent_id=?",
+                "mode=?,run_contract=?,settings=?,recovery='{}',last_report_at=0,error='',updated_at=? WHERE agent_id=?",
                 (f"run_{uuid.uuid4().hex}", profile["mode"], json.dumps(execution_contract(profile)),
                  json.dumps(validate_settings(profile, row["settings"], require=True)), time.time(), agent_id))
             self.store.event(project_id, "runtime.launch", principal, agent_id, "Requested remote agent launch")
@@ -291,6 +316,7 @@ class RuntimeRegistry:
             for row in self.store.all("SELECT * FROM agent_runtimes WHERE node_id=?", (node["id"],)):
                 row["settings"] = json.loads(row["settings"])
                 row["run_contract"] = json.loads(row["run_contract"])
+                row["recovery"] = json.loads(row["recovery"])
                 if row["state"] == "queued":
                     self.store.db.execute("UPDATE agent_runtimes SET state='starting',updated_at=? WHERE agent_id=?",
                                           (time.time(), row["agent_id"]))
@@ -304,6 +330,10 @@ class RuntimeRegistry:
         self.store.db.execute("UPDATE agent_runtimes SET state='unconfirmed',desired_state='stopped',pid=NULL,error=?,updated_at=? WHERE agent_id=?",
                               (error, time.time(), row["agent_id"]))
         self.store.db.execute("UPDATE agents SET status='offline' WHERE id=?", (row["agent_id"],))
+        previous = row.get("recovery", {})
+        previous = json.loads(previous) if isinstance(previous, str) else previous
+        self.store.db.execute("UPDATE agent_runtimes SET recovery=? WHERE agent_id=?",
+                              (json.dumps({**previous, "termination": "unconfirmed"}), row["agent_id"]))
 
     def _finished(self, row, state, error=""):
         self.store.db.execute(
@@ -339,6 +369,8 @@ class RuntimeRegistry:
                 state = data.state if row["desired_state"] == "running" else "stopping"
                 self.store.db.execute("UPDATE agent_runtimes SET state=?,pid=?,error='',updated_at=? WHERE agent_id=?",
                                       (state, data.pid, time.time(), data.agent_id))
+            self.store.db.execute("UPDATE agent_runtimes SET recovery=?,last_report_at=? WHERE agent_id=?",
+                                  (data.recovery.model_dump_json(), time.time(), data.agent_id))
             self.store.event(row["project_id"], "runtime.status", SimpleNamespace(actor=node["id"]),
                              data.agent_id, f"Remote agent {state}" + (f" · {data.error}" if data.error else ""))
         return self.runtime(data.agent_id)
@@ -349,7 +381,7 @@ class RuntimeRegistry:
             if self.store.one("SELECT agent_id FROM agent_runtimes WHERE node_id=? AND state IN ('starting','running','stopping','unconfirmed')",
                               (node["id"],)):
                 fail(409, "Stop and report all processes before disconnecting this node.")
-            self.store.db.execute("UPDATE nodes SET session_id=NULL,last_seen=0 WHERE id=?", (node["id"],))
+            self.store.db.execute("UPDATE nodes SET session_id=NULL,last_contact=MAX(last_contact,last_seen),last_seen=0 WHERE id=?", (node["id"],))
             self.store.event(node["project_id"], "node.disconnected", SimpleNamespace(actor=node["id"]), node["id"],
                              f"{node['name']} disconnected")
         return {"ok": True}

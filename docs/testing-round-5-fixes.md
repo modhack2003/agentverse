@@ -56,4 +56,4 @@ npm test
 
 Copied setup and native MCP transport checks establish connectivity; they do not establish full readiness of every vendor's authenticated agent and model. Live vendor accounts/models, PowerShell, real VPS/HTTPS/systemd deployment, Firefox/Safari, and physical mobile devices require separate verification.
 
-The optional UX suggestions in the original audit—setup guidance, a vendor/version acceptance matrix, conflict comparison controls, ordinary task editing, credential recovery, failed-logout retry, and explicit unset boolean settings—remain separate follow-up work. They are not represented as implemented by this patch.
+The optional UX suggestions were subsequently implemented and retested in [the optional fixes report](testing-optional-fixes.md). The results above describe the earlier defect-repair commit; see that report for the later changes and validation.

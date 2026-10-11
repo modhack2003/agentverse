@@ -205,8 +205,20 @@ class NodeService:
             self.last_inventory = time.monotonic()
 
     def queue_report(self, row, state, pid=None, error=""):
+        profile = self.profiles.get(row.get("profile_id"))
+        child = self.children.get(row["agent_id"])
+        mode = row.get("mode") or (child.profile.mode if child and child.profile else None) or (profile.mode if profile else None)
+        # Only publish bounded status values. The local journal may contain provider credentials.
+        path = self.logs / f"{row['run_id']}.json"
+        journal = "available" if read_state(path) else "missing"
+        if mode == "managed_cli":
+            journal = "not_applicable"
+        elif mode != "managed_api" and not path.exists():
+            journal = "unknown"
         self.pending_reports[row["agent_id"]] = {
-            "agent_id": row["agent_id"], "run_id": row["run_id"], "state": state, "pid": pid, "error": error[:2000]}
+            "agent_id": row["agent_id"], "run_id": row["run_id"], "state": state, "pid": pid, "error": error[:2000],
+            "recovery": {"journal": journal, "termination": "unconfirmed" if state == "unconfirmed" else
+                         "confirmed" if state in {"stopped", "failed"} else "unknown"}}
 
     def flush_reports(self):
         for agent_id, payload in list(self.pending_reports.items()):
@@ -290,7 +302,7 @@ class NodeService:
                 list(pool.map(self.terminate, [child for _, child in stopping]))
             for agent_id, child in stopping:
                 del self.children[agent_id]
-                self.queue_report({"agent_id": agent_id, "run_id": child.run_id}, "stopped" if self.confirmed(child) else "unconfirmed")
+                self.queue_report({"agent_id": agent_id, "run_id": child.run_id, "mode": child.profile.mode if child.profile else None}, "stopped" if self.confirmed(child) else "unconfirmed")
         # A finished report must be delivered before the same run can be considered for launch again.
         self.flush_reports()
         uncertain = [row for row in desired.values() if row["state"] == "unconfirmed"]
@@ -304,6 +316,10 @@ class NodeService:
             if row["state"] == "unconfirmed":
                 if row["run_id"] in confirmed_runs:
                     self.queue_report(row, "stopped")
+                else:
+                    self.queue_report(row, "unconfirmed", error=row.get("error", ""))
+                    if self.pending_reports[row["agent_id"]]["recovery"] == row.get("recovery"):
+                        self.pending_reports.pop(row["agent_id"])
                 continue
             if row["desired_state"] == "stopped":
                 if row["agent_id"] not in self.children:
@@ -340,7 +356,7 @@ class NodeService:
             with ThreadPoolExecutor(max_workers=len(children)) as pool:
                 list(pool.map(self.terminate, [child for _, child in children]))
         for agent_id, child in children:
-            self.queue_report({"agent_id": agent_id, "run_id": child.run_id}, "stopped" if self.confirmed(child) else "unconfirmed")
+            self.queue_report({"agent_id": agent_id, "run_id": child.run_id, "mode": child.profile.mode if child.profile else None}, "stopped" if self.confirmed(child) else "unconfirmed")
             del self.children[agent_id]
         try:
             self.flush_reports()

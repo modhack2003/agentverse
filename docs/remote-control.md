@@ -116,3 +116,11 @@ AGENTVERSE_NODE_TOKEN=YOUR_NODE_TOKEN
 Install the adjusted unit and run `systemctl enable --now agentverse-node`. Existing `agentcommons-node.service` installations remain compatible; do not run old and new units for the same node token simultaneously.
 
 Upgrading an existing deployment? Follow [migration](migration.md), retaining database, Compose volume identity, credentials, and recovery journals.
+
+## Credential replacement and uncertain recovery
+
+Use **Agents & connections → Replace token** on any agent card, including a revoked identity or a managed runtime. Replacement invalidates the old token immediately and shows the new token once. Active managed runs and task/review/help claims block replacement until they end or are released. Stop external connected clients before installing the replacement token.
+
+Use **Replace node token** on the node card to retain its identity and configured runtimes. Stop its service, finish all managed runs, and wait until it is offline (45 seconds from its last contact if it did not disconnect cleanly). The server refuses replacement while runs are queued, starting, running, stopping or unconfirmed. Update `AGENTVERSE_NODE_TOKEN`, then restart with the same configuration and log directory. The old token and session can no longer register, poll or report.
+
+**Run recovery evidence** shows node last contact, last run report, last reported journal availability, termination evidence, run ID and the frozen execution contract. This is reported evidence, not a live inspection of an offline machine. Unknown means the node has not supplied evidence. Provider keys, journal contents and executable commands are never published. Preserve the original journal when restarting an uncertain API run; restore provider connectivity so the node can reconcile cancellation. The dashboard cannot force-release uncertain work through token replacement.

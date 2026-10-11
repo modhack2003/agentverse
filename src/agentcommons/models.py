@@ -174,12 +174,18 @@ class RuntimeConfig(BaseModel):
         return values
 
 
+class RecoveryEvidence(BaseModel):
+    journal: Literal["available", "missing", "not_applicable", "unknown"] = "unknown"
+    termination: Literal["confirmed", "unconfirmed", "unknown"] = "unknown"
+
+
 class RuntimeReport(NodePoll):
     agent_id: str = Field(min_length=1, max_length=80)
     run_id: str = Field(pattern=r"^run_[a-f0-9]{32}$")
     state: Literal["starting", "running", "stopped", "failed", "unconfirmed"]
     pid: int | None = Field(default=None, ge=1)
     error: str = Field(default="", max_length=2000)
+    recovery: RecoveryEvidence = Field(default_factory=RecoveryEvidence)
 
 
 class SettingField(BaseModel):

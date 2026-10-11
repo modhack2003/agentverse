@@ -10,6 +10,14 @@ export default function ConnectionDetails({ agent, token, copy }: { agent: Agent
   const toolVersion = agent.session_info.tool_version || ''
   const powerShellCapabilities = agent.configured_capabilities.map(powerShellString).join(', ')
   const powerShellLimitations = agent.configured_limitations.map(powerShellString).join(', ')
+  const install = 'python -m pip install "agentverse-workspace @ git+https://github.com/modhack2003/agentverse.git"'
+  const check = `from agentverse import Client
+
+# Two requests, each with a 5-second network timeout; no heartbeat loop.
+with Client(${pythonString(server)}, ${pythonString(token)}, timeout=5) as peer:
+    peer.connect(capabilities=${capabilities}, limitations=${limitations}, tool_version=${pythonString(toolVersion)})
+    peer.post("/api/agents/heartbeat", {"status": "idle"})
+    print("PASS: AgentVerse HTTP authentication and presence. Native tool login, model execution, MCP attachment and cancellation are UNVERIFIED.")`
   const python = `import time
 from agentverse import Client
 
@@ -48,7 +56,9 @@ while ($true) {
   return <div className="connection-dialog">
     <label>Agent token<div className="copy-box"><code>{token}</code><button className="icon-button" aria-label="Copy agent token" onClick={() => copy(token)}><Copy size={16} /></button></div></label>
     <div className="connection-step"><span>1</span><div><h3>Connect {agent.name} over HTTP</h3><p>HTTP is the simplest agent connection. The client uses the AgentVerse SDK or REST API to announce itself, read context, send messages, request help, and maintain a heartbeat.</p></div></div>
-    <h3>Python HTTP SDK</h3><pre>{python}</pre><button className="button secondary" onClick={() => copy(python)}><Copy size={15} />Copy Python setup</button>
+    <h3>Python HTTP SDK</h3><p>Use Python 3.11 or newer and Git. Install the SDK first in the same Python environment where you will run the setup:</p><pre>{install}</pre><button className="button secondary" onClick={() => copy(install)}><Copy size={15} />Copy SDK install</button><pre>{python}</pre><button className="button secondary" onClick={() => copy(python)}><Copy size={15} />Copy Python setup</button>
+    <h3>Bounded connection check</h3><p>Run once to check HTTP authentication and presence. This does not start your native agent or verify its provider login or ability to do work. Presence expires after this script exits.</p><pre>{check}</pre><button className="button secondary" onClick={() => copy(check)}><Copy size={15} />Copy connection check</button>
+    <p><a href="https://github.com/modhack2003/agentverse/blob/main/docs/vendor-acceptance.md" target="_blank" rel="noreferrer">Vendor/version acceptance matrix: live native combinations remain unverified</a></p>
     <h3>Windows PowerShell / REST</h3><pre>{powershell}</pre><button className="button secondary" onClick={() => copy(powershell)}><Copy size={15} />Copy PowerShell setup</button>
     <div className="connection-step"><span>2</span><div><h3>Introduce the session to its teammates</h3><p>These examples announce the selected agent’s actual capabilities and limitations, then keep its presence alive with a heartbeat every 25 seconds.</p></div></div>
     <div className="connection-step"><span>3</span><div><h3>For Launch and Stop from the web UI</h3><p>HTTP connected sessions are manageable for collaboration, but they do not let the dashboard start or stop the agent. Add a remote node with a verified managed CLI or jobs-protocol API adapter, then choose Configure → runtime → model/settings → Launch.</p></div></div>
