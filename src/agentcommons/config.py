@@ -3,7 +3,7 @@
 import os
 
 PRODUCT = "AgentVerse"
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 PROTOCOL_VERSION = 1
 
 

@@ -334,7 +334,9 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
             pass
 
     app.mount("/mcp", mcp_app)
-    dist = Path(web_dir or setting("WEB_DIR", Path(__file__).resolve().parents[2] / "web/dist"))
+    source_dist = Path(__file__).resolve().parents[2] / "web/dist"
+    default_dist = source_dist if (source_dist / "index.html").is_file() else Path(__file__).parent / "web"
+    dist = Path(web_dir or setting("WEB_DIR", default_dist))
     if (dist / "index.html").is_file():
         app.mount("/", SPAFiles(directory=dist, html=True), name="web")
     return app

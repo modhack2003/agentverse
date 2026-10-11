@@ -14,7 +14,7 @@ jobs:
         with:
           version: "latest"
       - run: uv sync --frozen --extra dev --python 3.12
-      - run: uv run ruff check src tests
+      - run: uv run ruff check src tests install.py
       - run: uv run pytest -q
       - uses: actions/setup-node@v4
         with:
@@ -25,6 +25,11 @@ jobs:
         working-directory: web
       - run: npm run build
         working-directory: web
+      - run: npm run bundle:check
+        working-directory: web
+      - run: uv build
+      - run: uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.3.0-py3-none-any.whl
+      - run: uv run python tests/package_smoke.py --package https://github.com/modhack2003/agentverse/archive/${{ github.sha }}.zip
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - run: npm test
@@ -36,3 +41,16 @@ jobs:
         with:
           name: browser-test-results
           path: web/test-results/
+  installation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "latest"
+      - run: uv build
+      - run: uv run --no-project --python 3.12 python tests/package_smoke.py --wheel dist/agentverse_workspace-0.3.0-py3-none-any.whl

@@ -1,28 +1,151 @@
 # AgentVerse
 
-**Different agents. One project. A real team.**
+**A shared workspace for your AI agents and their human owner.**
 
-A self-hosted collaboration hub for OpenCode, Cline, Omnirush, Agent Zero, Claude, Codex, Kiro, Antigravity, and future tools. Connect headless CLIs, API adapters, editors, and applications as equal teammates. Coordinate through conversations, capability-aware tasks, durable help requests, shared memory, isolated Git worktrees, and independent reviews.
+AgentVerse gives a team one place for tasks, conversations, shared memory, help requests, and independent code reviews. Use the browser dashboard or terminal UI, and connect agents running on your computer or remote machines.
+
+The package includes the server, dashboard, terminal UI, Python SDK, and node/worker commands. Install and authenticate your chosen coding tools separately; AgentVerse does not include model subscriptions or vendor credentials.
 
 ![AgentVerse dashboard](docs/assets/dashboard.png)
 
-## What you get
+## Install and start — one command
 
-- **Seven animated atmospheres.** Aurora, Cosmic, Ember, Daylight, Atoms, Deep Sea, and Deep Galaxy. Persistent browser preferences, motion controls, reduced-motion support, hidden-tab pausing, accessible dialogs, and mobile layouts.
-- **A first-class terminal interface.** Textual manages the same remote workspace: tasks, chat/DMs, agents, runtime settings, launch/stop, memory, reviews, health, and help.
-- **Individual agents, shared understanding.** Editable roles, capability tags, limitations, tool/session versions, and optimistic profile-version checks. Peers discover one another through MCP or HTTP.
-- **Teammates helping teammates.** Request expertise by capability. A matching peer can claim and answer; idle workers can help automatically. Track and resolve agent-specific problems.
-- **Three connection modes.** Managed CLI, managed API, or connected editor/application sessions. The interface only offers launch controls for managed modes and only settings advertised by an adapter.
-- **Independent node inventories.** Every VPS advertises its own tools, models, supported settings, and diagnostics. One missing tool does not disable healthy profiles. Valid local configuration changes reload automatically.
-- **Open-ended integration.** Any tool ID is accepted. Use a local command, a jobs-protocol API, MCP/HTTP, or an `agentverse.adapters` entry-point plugin. [Adapter contract →](docs/adapters.md)
-- **Natural conversations and durable context.** Team channels, private DMs, task-linked handoffs, versioned memory, and live events.
-- **Parallel coding and peer review.** Atomic claims, dependencies, required capabilities, isolated worktrees, committed submissions, and reviewed merges without force-pushing.
-- **Reliable remote control.** Run-scoped credentials, connection leases, generation fencing, process-group cancellation, and held claims while API cancellation is unconfirmed.
-- **Your VPS, your data.** Docker, persistent SQLite/WAL, optional Caddy HTTPS. Provider credentials and executable commands stay on nodes.
+**Requirement:** Python **3.11 or newer** and an internet connection. Check with `python3 --version` (Windows: `py -3 --version`). No Git, Node.js, npm, uv, Docker, or administrator privileges are needed for this installation.
 
-## Quick start with Docker
+**macOS / Linux:**
 
-Requirements: Docker Engine with Compose.
+```bash
+python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py').read(), {'__name__': '__main__'})"
+```
+
+**Windows PowerShell:**
+
+```powershell
+py -3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py').read(), {'__name__': '__main__'})"
+```
+
+These commands run this repository's [installer](install.py). To inspect it first, [download install.py](https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py), then run `python3 install.py` or `py -3 install.py` in the download folder.
+
+The installer:
+
+1. Creates an isolated Python environment in `~/.agentverse/venv`.
+2. Installs **one AgentVerse package**, including the already-built dashboard and its Python dependencies.
+3. Generates a private administrator token and saves setup in `~/.agentverse/config.json`.
+4. Starts the app at **http://127.0.0.1:8000** and tries to open your browser.
+
+Keep the terminal open while using the app. Copy the token printed there, choose **Access token** in the dashboard, and paste it. If the browser does not open, visit the address yourself. **Ctrl+C** stops the server; your workspace is saved.
+
+Rerunning the installer upgrades the application and keeps the existing token, port, and database. Stop the running server and back up your workspace before upgrading.
+
+### Start again, recover the token, or change the port
+
+The installer prints a restart command for your installation. With the default location:
+
+| Action | macOS / Linux | Windows PowerShell |
+|---|---|---|
+| Start | `~/.agentverse/venv/bin/agentverse serve --home ~/.agentverse` | `& "$HOME\.agentverse\venv\Scripts\agentverse.exe" serve --home "$HOME\.agentverse"` |
+| Show your saved login token | `~/.agentverse/venv/bin/agentverse setup --no-start` | `& "$HOME\.agentverse\venv\Scripts\agentverse.exe" setup --no-start` |
+| Save and use a different port | `~/.agentverse/venv/bin/agentverse setup --port 8001` | `& "$HOME\.agentverse\venv\Scripts\agentverse.exe" setup --port 8001` |
+
+For installer options, download the file and run:
+
+```bash
+python3 install.py --help
+python3 install.py --no-start              # install and save setup without starting
+python3 install.py --no-browser            # start without opening a browser
+python3 install.py --home /path/to/workspace --port 8001
+```
+
+For a custom location, include `--home /path/to/workspace` when running `serve` or `setup` later. On Windows, use `py -3` instead of `python3`.
+
+Already manage your own Python environment? Install the complete package directly:
+
+```bash
+python -m pip install "https://github.com/modhack2003/agentverse/archive/refs/heads/main.zip"
+python -m agentcommons.cli setup
+```
+
+`agentcommons` is the compatible command/module name; `agentverse` is the preferred installed CLI. The GitHub archive includes the compiled UI, so this path also needs no frontend build. The package name is `agentverse-workspace`; these instructions install it from GitHub rather than assuming a PyPI release.
+
+## Your first project
+
+1. Log in with the administrator token.
+2. Click **Create project** beside **PROJECTS**. Give it a name and a clear goal.
+3. Add work in **Task board**. Describe the expected result and any dependencies or required capabilities.
+4. Open **Agents & connections**, create a teammate, and select a connection mode from the table below. Save its connection token when shown.
+5. Follow that mode's setup guide. Confirm the teammate appears online before assigning work; managed teammates also need runtime configuration and **Launch**.
+6. Use conversations, shared memory, and help requests to coordinate. Work submitted for review needs a separate reviewer; connect at least two active teammates for unattended implementation and peer review.
+
+Creating a teammate record does **not** start a coding tool. Adding an MCP endpoint does **not** start an unattended worker loop.
+
+## Connect your agents
+
+| Mode | Use it for | What you must set up | Guide |
+|---|---|---|---|
+| **Connected session** | An editor, application, or your own agent loop | Its MCP/HTTP connection and teammate token; the client controls its own model and startup | [Client recipes and SDK](docs/agents.md) |
+| **Managed CLI** | A headless coding command running on a node | An authenticated tool, repository, node profile, and a command that follows the worker contract | [Nodes, launch, and recovery](docs/remote-control.md) |
+| **Managed API** | A coding service exposed through an API bridge | A node profile and an AgentVerse jobs-protocol bridge with acknowledged cancellation | [API adapter contract](docs/adapters.md) |
+
+For an editor/app, use the server's `/mcp/` endpoint with `Authorization: Bearer YOUR_AGENT_TOKEN`. On the same computer this is `http://127.0.0.1:8000/mcp/`. Call `announce_peer`, discover `list_teammates`, and maintain heartbeats as described in the [peer loop](docs/agents.md). Each active session needs its own teammate identity.
+
+**Remote machines cannot reach your computer through `127.0.0.1`.** Give them a reachable HTTPS server address using the VPS deployment below. Provider keys, executable commands, Git credentials, and tool logins stay on each node.
+
+To inspect installed tools:
+
+```bash
+agentverse doctor
+agentverse doctor --config /path/to/node.json
+```
+
+When using the installer, run these with the full CLI path from the restart table, or activate its virtual environment. Tool detection is not proof of headless support or model authentication. Only settings advertised by the selected adapter can be configured.
+
+A standalone worker can join an existing server:
+
+```bash
+export AGENTVERSE_AGENT_TOKEN='this-teammates-token'
+agentverse worker --server https://agents.your-domain.com \
+  --repo /srv/projects/your-project --command 'opencode run {prompt}'
+```
+
+This example requires an installed/authenticated command that accepts prompts and emits the structured [worker result](docs/agents.md#unattended-worker-contract). A plain chat-completions endpoint is not a coding jobs API. See the [vendor/version acceptance matrix](docs/vendor-acceptance.md): deterministic CLI/API/MCP fixtures are tested; live native vendor/model combinations are explicitly unverified. Managed subprocess nodes target Linux/macOS; do not assume Windows managed-node support from the cross-platform installer.
+
+## What you can do
+
+- **Coordinate work:** capability-aware tasks, atomic claims, dependencies, isolated Git worktrees, committed submissions, and independent reviews.
+- **Share context:** team channels, private messages, versioned memory, handoffs, and peer help requests.
+- **Control managed agents:** node inventories, advertised models/settings, launch/stop, diagnostics, token recovery, and run-scoped credentials.
+- **Use either interface:** the web dashboard and terminal UI share the same server and workspace.
+- **Customize the dashboard:** seven atmospheres, saved appearance preferences, motion controls, accessible dialogs, and mobile layouts.
+- **Add tools:** custom CLI commands, jobs-protocol API bridges, MCP/HTTP clients, and [adapter plugins](docs/adapters.md).
+
+## Terminal UI
+
+![AgentVerse terminal interface](docs/assets/terminal.svg)
+
+```bash
+export AGENTVERSE_ADMIN_TOKEN='your-admin-token'
+agentverse tui --server http://127.0.0.1:8000
+```
+
+Use the installed CLI path if it is not on your `PATH`. For a remote workspace, replace the server URL. On PowerShell, set the token with `$env:AGENTVERSE_ADMIN_TOKEN = 'your-admin-token'`.
+
+| Key | Action |
+|---|---|
+| `p` / `n` / `a` / `m` | Create project / task / teammate / memory |
+| `Enter` | Inspect task or teammate; edit selected memory |
+| `c` / `e` | Configure runtime / edit teammate profile |
+| `l` / `s` | Launch / stop managed teammate |
+| `o` / `h` | Register node / request help |
+| `i` / `x` | Report / resolve an agent problem |
+| `r` / `Space` / `q` | Release task / pause-resume / quit |
+
+Administrator operations need an admin token. The **Health & help** tab shows node diagnostics and peer requests.
+
+## Docker and VPS deployment
+
+Use this alternative for an always-running server. Requirements: Git, Docker Engine with Compose, and Python 3 for secret generation.
+
+**New installations only:**
 
 ```bash
 git clone https://github.com/modhack2003/agentverse.git
@@ -31,112 +154,91 @@ cp .env.example .env
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
-Put the generated secret in `AGENTVERSE_ADMIN_TOKEN` in `.env`, then:
+Paste the generated secret into `AGENTVERSE_ADMIN_TOKEN` in `.env`, then start:
 
 ```bash
 docker compose up -d --build
 ```
 
-Open **http://localhost:8000**, log in with the admin token, create a project and common goal, and use **Agents & connections** to invite teammates. Tokens are displayed once. **Appearance** chooses a theme and background motion.
+Open http://localhost:8000 and log in with that token. Compose keeps SQLite in its persistent volume. Stop with `docker compose down`; keep the volume to retain your data.
 
-For public HTTPS, point a domain at the VPS, set `AGENTVERSE_DOMAIN=agents.your-domain.com`, allow ports 80/443, and run:
+For public HTTPS, point a domain at your VPS, set `AGENTVERSE_DOMAIN=agents.your-domain.com` in `.env`, allow ports 80/443, and run:
 
 ```bash
 docker compose -f compose.yml -f compose.production.yml up -d --build
 ```
 
-Caddy serves the dashboard, API, WebSocket, and MCP endpoint. The base application port remains bound to loopback.
+Caddy serves the dashboard, API, WebSocket, and MCP over HTTPS. The application port remains bound to loopback. Docker installations and Python-installer installations use separate data locations.
 
-## Connect remote teammates
+## Data, upgrades, and common problems
 
-| Mode | Setup | Where control lives |
-|---|---|---|
-| Managed CLI | A node profile with a verified headless command and real model options | Dashboard/TUI launch, stop, model, advertised settings |
-| Managed API | A node profile with an AgentVerse jobs-protocol API bridge | Dashboard/TUI; cancellation must be acknowledged |
-| Connected session | Start an editor/app and attach authenticated MCP or HTTP | Its own client controls startup, model, and shutdown |
+For the Python installer, your local workspace lives in **`~/.agentverse/data/agentverse.db`** and credentials in **`~/.agentverse/config.json`**. Keep the token private. Stop the server before backing up the entire `~/.agentverse` directory; SQLite may also have `-wal` and `-shm` files. Restore to the same location, or rerun the installer with `--home` pointing to the restored directory. Removing the virtual environment alone does not delete your workspace; rerun the installer to recreate it.
 
-1. **Inventory each machine:** `uv run agentverse doctor` detects known commands; `doctor --config /path/to/node.json` validates individual configured profiles. Detection is not proof of headless support or model authentication.
-2. **Managed work:** register a remote node, prepare its clone/tool authentication, and start one node service. Choose Configure → node/runtime/model/settings → Launch. See [remote setup and recovery](docs/remote-control.md).
-3. **Editors/apps:** attach `https://your-domain/mcp/` with `Authorization: Bearer YOUR_AGENT_TOKEN`; call `announce_peer`, discover `list_teammates`, and maintain heartbeats. See [client recipes and peer loop](docs/agents.md).
-4. **API/custom tools:** implement the [adapter contract](docs/adapters.md). A plain chat-completions endpoint is not a coding jobs API.
-
-Use a separate teammate identity for each active session. A managed run uses an ephemeral token rather than the saved connection token. At least two independently active teammates are needed for unattended implementation plus peer review.
-
-A standalone CLI worker can also join:
-
-```bash
-uv sync --frozen
-export AGENTVERSE_AGENT_TOKEN='this-teammates-token'
-uv run agentverse worker --server https://agents.your-domain.com \
-  --repo /srv/projects/your-project --command 'opencode run {prompt}'
-```
-
-The tool must accept a prompt and emit the structured [worker result](docs/agents.md#unattended-worker-contract). Workers use the node's existing provider login, Git identity, and repository credentials. Native MCP attachment alone does not start an unattended agent loop. See the [vendor/version acceptance matrix](docs/vendor-acceptance.md) for verified fixture coverage and explicitly unverified native combinations.
-
-## Terminal UI
-
-![AgentVerse terminal interface](docs/assets/terminal.svg)
-
-```bash
-export AGENTVERSE_ADMIN_TOKEN='your-admin-token'
-uv run agentverse tui --server https://agents.your-domain.com
-```
-
-| Key | Action |
+| Problem | What to do |
 |---|---|
-| `p` / `n` / `a` / `m` | Create project / task / teammate / memory |
-| `Enter` | Inspect task or teammate; edit selected memory |
-| `c` / `e` | Configure selected teammate's runtime / edit profile |
-| `l` / `s` | Launch / stop selected managed teammate |
-| `o` / `h` | Register node / request peer help |
-| `i` / `x` | Report / resolve an agent problem |
-| `r` / `Space` / `q` | Release task / pause-resume / quit |
+| Python is missing or older than 3.11 | Install a current Python 3 version, then rerun. On Windows, use the `py -3` launcher. |
+| `venv` / `ensurepip` is missing on Debian/Ubuntu | Install the matching `python3-venv` OS package, then rerun. |
+| Download or dependency installation fails | Check your internet connection, proxy, and Python certificate setup. The installer reports the failure; rerun after correcting it. |
+| Port 8000 is already in use | Stop the other server, or run `setup --port 8001`. Open the new address. |
+| Dashboard does not open automatically | Open the printed local URL manually; the terminal must still be running. |
+| Login fails | Select **Access token** and copy the saved token using `setup --no-start`. Password login is optional and is not configured by the installer. |
+| `agentverse` command not found | Use the full path in the restart table. The installer isolates commands rather than changing your shell configuration. |
+| Agent stays offline or does not work | Check its connection mode, token, heartbeat/worker loop, node diagnostics, tool login, and worker contract. See the connection guides above. |
+| Existing setup file is invalid | Restore a backup of `config.json`. Setup refuses to overwrite invalid credentials or silently reset the workspace. |
 
-The **Health & help** tab exposes node diagnostics and peer requests. Runtime configuration accepts advertised settings as JSON; the web dashboard renders them as typed controls. Administrator-only operations require an admin token.
+### Existing AgentCommons deployments
 
-## Upgrade from AgentCommons
+The old CLI, Python imports, `AGENTCOMMONS_*` variables, tokens, MCP URLs, and SQLite data remain compatible. `AGENTVERSE_*` variables take precedence. **Keep the existing `.env`, Compose project name, volume, database path, and node log directory.** The new local installer creates a separate workspace; it does not migrate an existing deployment. Follow [migration and rollback](docs/migration.md) before upgrading it.
 
-The CLI `agentcommons`, Python imports, `AGENTCOMMONS_*` variables, existing tokens, MCP URLs, and SQLite data remain compatible. New installations use `agentverse` and `AGENTVERSE_*`; new variables take precedence.
+## Development and verification
 
-**Keep your existing `.env`, Compose project name, persistent volume, database path, and node log directory.** Do not replace them with the new-install example. See [migration and rollback](docs/migration.md) before rebuilding an existing deployment.
-
-## Develop and verify
-
-Requirements: Python 3.11+ (3.12 recommended), uv, Node.js 22+, npm.
+Only contributors rebuilding the UI need Node.js. Requirements: Python 3.11+ (3.12 recommended), uv, Node.js 22+, and npm.
 
 ```bash
 uv sync --frozen --extra dev
-# Set AGENTVERSE_ADMIN_TOKEN or use your existing .env.
+uv run agentverse setup --no-start
 uv run agentverse serve --reload
 ```
 
-In `web/`: `npm ci`, then `npm run dev`. Open http://localhost:5173; Vite proxies the API to port 8000. `npm run build` produces `web/dist`, bundled automatically in Docker.
+In another terminal:
 
 ```bash
-uv run ruff check src tests
+cd web
+npm ci
+npm run dev
+```
+
+Open http://localhost:5173; Vite proxies API/MCP requests to the server on port 8000. If your local setup uses another port, adjust the Vite proxy too.
+
+**After changing the frontend, run `npm run bundle` in `web/` and commit the updated `src/agentcommons/web/` assets.** This builds and refreshes the dashboard shipped with the Python wheel and GitHub archive. CI compares the committed bundle with a fresh build to prevent stale UI packages.
+
+```bash
+uv run ruff check src tests install.py
 uv run pytest -q
+uv build
+uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.3.0-py3-none-any.whl
 # In web/:
 npm run build
+npm run bundle:check
 npx playwright install chromium
 npm test
 ```
 
-Coverage includes project isolation, DM privacy, concurrency/dependencies, plans/reviews, memory/profile conflicts, SDK/MCP, TUI, two-node real Git collaboration, mixed-tool health, all connection modes, settings validation, capability routing, token rotation, run/session fencing, real subprocess cancellation, and HTTP jobs with lost start responses and cancellation recovery. Browser workflows cover themes/accessibility/storage failures, onboarding, live updates, mobile navigation, settings/profiles/problems/help, and remote launch/stop. Coding/model fixtures are deterministic; these checks do not claim live vendor-model completion.
+The package smoke check installs into a clean environment outside the checkout, serves bundled assets without Node/Git/uv on runtime PATH, and tests authentication, projects/tasks, peer/MCP attachment, setup reruns, and restart persistence. Backend/browser tests also cover collaboration, conflicts, connection modes, cancellation, recovery, TUI, accessibility, and mobile layouts. These checks use deterministic coding/model fixtures, not live vendor-model completion.
 
-Production-image check: `docker build -t agentverse:check .`, then `uv run python tests/container_smoke.py --image agentverse:check`. It exercises the compiled frontend, packaged SDK/CLI aliases, MCP, non-root execution, and persistence across both environment prefixes. GitHub Actions runs this check too.
+Production-image check: `docker build -t agentverse:check .`, then `uv run python tests/container_smoke.py --image agentverse:check`. GitHub Actions runs package, browser, backend, bundle-freshness, and container checks.
 
-## Project map
+## More documentation
 
-```text
-src/agentverse/    Public SDK/import namespace
-src/agentcommons/ Compatibility-preserving API, store, adapters, node, worker, TUI
-web/              React/TypeScript dashboard, themes, browser tests
-tests/            Collaboration, adapters, lifecycle, Git, MCP, TUI tests
-examples/         CLI/API/connected node configurations and Linux services
-docs/             Architecture, connections, adapters, migration, screenshots
-compose*.yml      Docker deployment and VPS HTTPS overlay
-```
+[Agent connection recipes](docs/agents.md) · [Remote control and recovery](docs/remote-control.md) · [Adapter contract](docs/adapters.md) · [Architecture](docs/architecture.md) · [Vendor acceptance](docs/vendor-acceptance.md) · [Migration](docs/migration.md)
 
-See [architecture](docs/architecture.md) for consistency guarantees and deployment boundaries. A single coordination server supports multiple remote nodes; agent tools, permissions, and model quality determine project outcomes.
+| Location | Contents |
+|---|---|
+| `install.py` | Python-only installer and setup entry point |
+| `src/agentverse/` | Public SDK/import namespace |
+| `src/agentcommons/` | API, store, adapters, node, worker, TUI, bundled dashboard |
+| `web/` | Dashboard source, build scripts, browser tests |
+| `tests/` | Backend, lifecycle, setup, package, and container checks |
+| `examples/` | Node configurations and Linux service examples |
 
-Issues and pull requests are welcome. [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
+[Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
