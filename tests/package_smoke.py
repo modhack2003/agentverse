@@ -25,7 +25,7 @@ def verify(wheel):
     env["PYTHONIOENCODING"] = "utf-8"
     with tempfile.TemporaryDirectory(prefix="agentverse-package-") as temporary:
         cwd = Path(temporary)
-        home = cwd / "installation with spaces ü"
+        home = (cwd / "installation with spaces ü").resolve()
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -51,7 +51,7 @@ def verify(wheel):
         if os.name == 'nt':
             launcher_command = [str(Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/cmd.exe'), '/c', *launcher_command]
         launcher_status = json.loads(subprocess.check_output(launcher_command, cwd=cwd, env=env, text=True, encoding='utf-8'))
-        assert launcher_status['configured'] and launcher_status['home'] == str(home)
+        assert launcher_status['configured'] and launcher_status['home'] == str(home), launcher_status
         if os.name == 'nt':
             powershell = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
             output = subprocess.check_output([str(powershell), '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',

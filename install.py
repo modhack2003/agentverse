@@ -116,7 +116,7 @@ def write_launcher(home, python):
         content = '$env:AGENTVERSE_HOME = ' + quote(home) + '\n& ' + ' '.join(quote(value) for value in args) + ' @args\n'
         atomic_write(home / 'agentverse.ps1', content.encode('utf-8-sig'))
         batch = '@echo off\nchcp 65001 >nul\nsetlocal DisableDelayedExpansion\nset \"AGENTVERSE_HOME=' + str(home).replace('%', '%%') + '\"\n' + subprocess.list2cmdline(args).replace('%', '%%') + ' %*\n'
-        atomic_write(home / 'agentverse.cmd', batch.encode())
+        atomic_write(home / 'agentverse.cmd', batch.replace('\n', '\r\n').encode())
     else:
         content = '#!/bin/sh\nexport AGENTVERSE_HOME=' + shlex.quote(str(home)) + '\nexec ' + shlex.join(args) + ' "$@"\n'
         path = home / 'agentverse'

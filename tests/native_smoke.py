@@ -82,7 +82,7 @@ def verify(executable, package_archive=None):
     env['PYTHONIOENCODING'] = 'utf-8'
     with tempfile.TemporaryDirectory(prefix='agentverse-native-') as temporary:
         cwd = Path(temporary)
-        home = cwd / 'workspace with spaces ü'
+        home = (cwd / 'workspace with spaces ü').resolve()
         env['PATH'] = str(cwd)
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         def run(*args):
@@ -163,7 +163,7 @@ def verify(executable, package_archive=None):
             if os.name == 'nt':
                 launcher_command = [str(Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/cmd.exe'), '/c', *launcher_command]
             selected = json.loads(subprocess.check_output(launcher_command, cwd=cwd, env=env, text=True, encoding='utf-8'))
-            assert selected['home'] == str(home) and selected['configured']
+            assert selected['home'] == str(home) and selected['configured'], selected
             run('rollback', '--home', home)
             assert json.loads((home / 'installation.json').read_text(encoding="utf-8"))['executable'] == str(executable)
         if package_archive:

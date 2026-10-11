@@ -122,7 +122,7 @@ def write_native_launcher(home, executable):
         text = "$env:AGENTVERSE_HOME = '" + str(home).replace("'", "''") + "'\n& '" + executable.replace("'", "''") + "' @args\n"
         private_write(home / 'agentverse.ps1', text.encode('utf-8-sig'))
         batch = '@echo off\nchcp 65001 >nul\nsetlocal DisableDelayedExpansion\nset \"AGENTVERSE_HOME=' + str(home).replace('%', '%%') + '\"\n' + subprocess.list2cmdline([executable]).replace('%', '%%') + ' %*\n'
-        private_write(home / 'agentverse.cmd', batch.encode())
+        private_write(home / 'agentverse.cmd', batch.replace('\n', '\r\n').encode())
     else:
         path = home / 'agentverse'
         private_write(path, ('#!/bin/sh\nexport AGENTVERSE_HOME=' + shlex.quote(str(home)) + '\nexec ' + shlex.quote(executable) + ' "$@"\n').encode())
