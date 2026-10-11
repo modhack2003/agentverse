@@ -4,7 +4,7 @@ Download the package matching your operating system and CPU. Extract the entire 
 
 Portable Linux builds require glibc 2.39 or newer (Ubuntu 24.04 baseline); Alpine/musl and older distributions should use the Python installer or Docker. Packages are built and tested separately for Windows x64, macOS Intel/Apple Silicon, and Linux x64/ARM64. Native Windows ARM64, Android and iOS agent execution are not tested targets. Mobile browsers can connect to a hosted workspace.
 
-These initial native packages are unsigned unless the repository's signing credentials have been configured. No Windows Authenticode or Apple notarization certificate is included in the source. Operating systems may show an unknown-publisher warning. SHA-256 files and the updater manifest verify download integrity; checksums do not establish publisher identity.
+These initial native packages are unsigned unless the repository's signing credentials have been configured. No Windows Authenticode or Apple notarization certificate is included in the source. Operating systems may show an unknown-publisher warning. `SHA256SUMS` covers every release download, and the updater manifest verifies portable archive integrity; checksums do not establish publisher identity.
 
 Coding tools, Git for managed coding work, model subscriptions and provider credentials are configured separately. Tool discovery and heartbeat tests do not verify native model execution. Follow the connection wizard and vendor acceptance matrix.
 

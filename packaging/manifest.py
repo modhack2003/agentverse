@@ -20,3 +20,10 @@ for path in folder.rglob('agentverse-*.json'):
 if not manifest['platforms']:
     raise ValueError('No platform builds were found.')
 (folder / 'agentverse-manifest.json').write_text(json.dumps(manifest, indent=2))
+
+# Cover installers and native packages as well as portable archives.
+checksums = []
+for path in sorted(folder.iterdir()):
+    if path.is_file() and path.name != 'SHA256SUMS' and not path.name.endswith('.sha256'):
+        checksums.append(hashlib.sha256(path.read_bytes()).hexdigest() + '  ' + path.name)
+(folder / 'SHA256SUMS').write_text('\n'.join(checksums) + '\n')

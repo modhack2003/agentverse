@@ -21,7 +21,7 @@ Open [Downloads / latest release](https://github.com/modhack2003/agentverse/rele
 | Linux x64 / ARM64 | Matching `.tar.gz`, `.deb` or `.rpm` | Extract the whole portable folder and run `./agentverse`, or install the native package using your OS package manager. |
 | Android / iPhone | Browser dashboard | Connect to your running workspace URL. Mobile devices do not run managed agents. |
 
-Linux portable/native packages target **glibc 2.39+ (Ubuntu 24.04 baseline)**. Use the Python installer or Docker on older distributions or Alpine/musl. Windows ARM64 and other operating systems are not tested native targets. Select the correct macOS architecture. Initial native packages may be unsigned; publisher signing/notarization requires the maintainer's certificates. Checksums verify integrity, not publisher identity.
+Linux portable/native packages target **glibc 2.39+ (Ubuntu 24.04 baseline)**. Use the Python installer or Docker on older distributions or Alpine/musl. Windows ARM64 and other operating systems are not tested native targets. Select the correct macOS architecture. Initial native packages may be unsigned; publisher signing/notarization requires the maintainer's certificates. The release includes `SHA256SUMS` for installers, native packages and portable archives. Checksums verify integrity, not publisher identity.
 
 Keep portable folders in a permanent location. Open AgentVerse again to reuse the same workspace. The app starts in the background, finds an available local port, and opens a **first-run wizard**. Choose a user ID/password and optionally create your first project. Passwords are stored as salted hashes; the browser receives a revocable session. Setup links expire after 15 minutes: reopen the app to get a fresh link.
 
