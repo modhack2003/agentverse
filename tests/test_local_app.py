@@ -211,3 +211,17 @@ def test_unicode_node_config_and_worker_prompt(tmp_path):
     script.write_text('import sys,json\nfrom pathlib import Path\nprompt=Path(sys.argv[1]).read_text(encoding="utf-8")\nprint(json.dumps({"summary":prompt},ensure_ascii=False))\n', encoding='utf-8')
     phrase = 'বাংলা 中文 🚀'
     assert execute_agent(shlex.join([sys.executable, str(script), '{prompt_file}']), phrase, tmp_path, 10)['summary'] == phrase
+
+
+def test_startup_uses_persistent_workspace_launcher(tmp_path):
+    tmp_path = tmp_path.resolve()
+    import os
+    from agentcommons.startup import launch_command
+    prepare_setup(tmp_path)
+    command = launch_command(tmp_path, 'status')
+    assert command[0] == str(tmp_path / ('agentverse.cmd' if os.name == 'nt' else 'agentverse'))
+    if os.name == 'nt':
+        command = [str(Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/cmd.exe'), '/c', *command]
+    result = subprocess.check_output(command, text=True, encoding='utf-8')
+    assert json.loads(result)['home'] == str(tmp_path)
+    assert json.loads((tmp_path / 'installation.json').read_text())['python'] == sys.executable

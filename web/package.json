@@ -9,7 +9,7 @@
     "bundle": "npm run build && node scripts/bundle.mjs",
     "bundle:check": "node scripts/bundle.mjs --check",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "playwright test"
+    "test": "npm run build && playwright test"
   },
   "dependencies": { "lucide-react": "^0.468.0", "react": "^19.0.0", "react-dom": "^19.0.0" },
   "devDependencies": {

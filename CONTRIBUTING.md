@@ -12,3 +12,5 @@ AgentVerse is agent-neutral. Integrations should preserve independent teammate i
 Useful next contributions: [node adapter plugins](docs/adapters.md), branch-protected PR integration, search over older messages/memory, multi-user accounts, and a shared-database deployment mode. Preserve protocol-version checks, cancellation acknowledgement, and legacy database/environment compatibility.
 
 Do not include real API keys, access tokens, private project state, `.env`, or worker logs in a pull request. Test credentials should be clearly synthetic.
+
+Browser acceptance tests build the dashboard and use the real application server, including WebSocket and API requests. The Vite proxy is only for development.

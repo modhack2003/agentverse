@@ -10,11 +10,31 @@ import subprocess
 import sys
 
 from .local import private_write
-from .processes import module_command, external_run
+from .processes import external_run
 
 
 def identifier(home):
     return 'agentverse-' + hashlib.sha256(str(home).encode()).hexdigest()[:12]
+
+
+def launch_command(home, action):
+    """Shortcuts and services follow the selected version through one stable file."""
+    metadata_path = home / 'installation.json'
+    if metadata_path.exists():
+        metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
+    else:
+        metadata = {'kind': 'native', 'executable': sys.executable} if getattr(sys, 'frozen', False) else {'kind': 'python', 'python': sys.executable}
+        private_write(metadata_path, json.dumps(metadata).encode())
+    if metadata.get('kind') == 'native' and metadata.get('executable'):
+        from .updates import write_native_launcher
+        write_native_launcher(home, metadata['executable'])
+    elif metadata.get('kind') == 'python' and metadata.get('python'):
+        from .installer import write_launcher
+        write_launcher(home, Path(metadata['python']))
+    else:
+        raise ValueError('Installation selection is damaged. Rerun the installer to restore the launcher; your data is kept.')
+    launcher = home / ('agentverse.cmd' if os.name == 'nt' else 'agentverse')
+    return [str(launcher), action, '--home', str(home)]
 
 
 def desktop_quote(value):
@@ -23,7 +43,7 @@ def desktop_quote(value):
 
 def shortcut(home, autostart=False, remove=False):
     name = identifier(home)
-    argv = module_command('agentcommons.cli', 'launch', '--home', home)
+    argv = launch_command(home, 'launch') if not remove else []
     if autostart:
         argv += ['--no-browser']
     if os.name == 'nt':
@@ -50,7 +70,7 @@ def shortcut(home, autostart=False, remove=False):
                     external_run(['/bin/launchctl', 'bootout', f'gui/{os.getuid()}', str(path)], capture_output=True)
                 path.unlink(missing_ok=True)
                 return path
-            service_argv = module_command('agentcommons.cli', 'serve', '--home', home)
+            service_argv = launch_command(home, 'serve')
             private_write(path, plistlib.dumps({'Label': name, 'ProgramArguments': service_argv,
                 'RunAtLoad': True, 'KeepAlive': False, 'StandardOutPath': str(home / 'service.log'),
                 'StandardErrorPath': str(home / 'service.log'), 'EnvironmentVariables': {'PYTHON_DOTENV_DISABLED': '1'}}))
@@ -85,7 +105,7 @@ def service(home, remove=False):
     else:
         def quote(value):
             return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%').replace('$', '$$') + '"'
-        argv = module_command('agentcommons.cli', 'serve', '--home', home)
+        argv = launch_command(home, 'serve')
         private_write(path, ('[Unit]\nDescription=AgentVerse workspace\nAfter=network.target\n[Service]\nType=simple\n'
             'ExecStart=' + ' '.join(quote(arg) for arg in argv) + '\nEnvironment=PYTHON_DOTENV_DISABLED=1\n'
             'Restart=on-failure\nRestartSec=5\n[Install]\nWantedBy=default.target\n').encode())

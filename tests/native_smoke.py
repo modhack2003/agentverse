@@ -102,6 +102,8 @@ def verify(executable, package_archive=None):
                 # prevent binding. The saved-port assertion below still verifies fallback.
                 pass
             run('start', '--home', home, '--no-browser')
+        shortcut = json.loads(run('shortcut', '--home', home))
+        assert Path(shortcut['path']).is_file()
         config = json.loads((home / 'config.json').read_text(encoding="utf-8"))
         assert config['port'] != 8000
         base = f"http://127.0.0.1:{config['port']}"
