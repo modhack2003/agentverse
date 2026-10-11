@@ -14,7 +14,7 @@ Install the same complete package on each node. Download [install.py](https://ra
 
 ```bash
 python3 install.py --no-start
-~/.agentverse/venv/bin/agentverse doctor
+~/.agentverse/agentverse doctor
 ```
 
 The commands below use the installer's default CLI path. Substitute your installation's path if you used `--home` or another Python environment. Existing source checkouts can still use `uv sync --frozen` and `uv run agentverse`; they are not required for a package installation. The node command uses its node token and does not load the installer's local administrator credentials.
@@ -22,10 +22,10 @@ The commands below use the installer's default CLI path. Substitute your install
 Save the JSON below (or download [node.example.json](../examples/node.example.json)) as `/path/to/node.json`, edit its values, then validate it:
 
 ```bash
-~/.agentverse/venv/bin/agentverse doctor --config /path/to/node.json
+~/.agentverse/agentverse doctor --config /path/to/node.json
 ```
 
-Linux/macOS supervisors need Python 3.11+. Managed coding also needs Git, an initial commit, the selected base branch, a prepared project clone, and working tool/provider/Git authentication. Connected-only inventories do not require a project clone.
+Windows, Linux and macOS supervisors can use a complete portable package; Python installations require Python 3.11+. Managed coding also needs Git, an initial commit, the selected base branch, a prepared project clone, and working tool/provider/Git authentication. Connected-only inventories do not require a project clone.
 
 Edit the example instead of assuming every detected command is headless. Use absolute executable paths if the service's `PATH` differs from your terminal. A missing executable, missing optional plugin, or failed health check is advertised for that profile; healthy tools still connect. CLI health confirms executable availability, not provider login or successful task completion. API health checks configuration, not remote reachability.
 
@@ -61,7 +61,7 @@ The tool ID can be any current/future tool; it is normalized to lowercase. Capab
 
 ```bash
 export AGENTVERSE_NODE_TOKEN='the-one-time-node-token'
-~/.agentverse/venv/bin/agentverse node --server https://agents.your-domain.com \
+~/.agentverse/agentverse node --server https://agents.your-domain.com \
   --config /path/to/node.json
 ```
 
@@ -113,7 +113,7 @@ The command can use chat/memory/help through its own identity. The worker owns c
 
 Use [agentverse-node.service](../examples/agentverse-node.service), adjusting user/paths. Prepare that user's tool/provider/Git access.
 
-For a package installation, set `ExecStart` to that service user's installed CLI (for example `/home/agentverse/.agentverse/venv/bin/agentverse node --config /etc/agentverse/node.json`) and set `WorkingDirectory` to an existing directory owned by that user. Run the installer as the chosen user first; an AgentVerse source checkout is not needed. Keep the environment file readable only by that user and administrators.
+For a package installation, set `ExecStart` to that service user's installed CLI (for example `/home/agentverse/.agentverse/agentverse node --config /etc/agentverse/node.json`) and set `WorkingDirectory` to an existing directory owned by that user. Run the installer as the chosen user first; an AgentVerse source checkout is not needed. Keep the environment file readable only by that user and administrators.
 
 Example private environment file:
 

@@ -50,6 +50,7 @@ class Store:
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.admin_hash = hashlib.sha256(admin_token.encode()).hexdigest()
+        self.local_login = None
         self.admin_sessions = {}
         self.login_attempts = {}
         self.lock = threading.RLock()
@@ -160,11 +161,14 @@ class Store:
             fail(401, "This identity has a managed run. Its worker uses a run-scoped token; connect other sessions as a separate teammate.")
         return Principal(agent["id"], agent["project_id"])
 
-    @staticmethod
-    def admin_credentials():
+    def admin_credentials(self):
         username = setting("ADMIN_USERNAME")
         password = setting("ADMIN_PASSWORD")
-        return (username, password) if username and password else None
+        if username and password:
+            return username, password
+        if self.local_login:
+            return self.local_login["username"], self.local_login["password_hash"]
+        return None
 
     def admin_credential_fingerprint(self):
         credentials = self.admin_credentials()
@@ -183,9 +187,10 @@ class Store:
         if len(attempts) >= 10:
             self.login_attempts[key] = attempts
             fail(429, "Too many login attempts. Try again in a minute.")
-        valid = hmac.compare_digest(username.encode("utf-8"), configured_username.encode("utf-8")) and hmac.compare_digest(
-            password.encode("utf-8"), configured_password.encode("utf-8")
-        )
+        from .passwords import verify_password
+        password_valid = (verify_password(password, configured_password) if self.local_login and not (setting("ADMIN_USERNAME") and setting("ADMIN_PASSWORD"))
+                          else hmac.compare_digest(password.encode("utf-8"), configured_password.encode("utf-8")))
+        valid = hmac.compare_digest(username.encode("utf-8"), configured_username.encode("utf-8")) and password_valid
         if not valid:
             attempts.append(now)
             self.login_attempts[key] = attempts

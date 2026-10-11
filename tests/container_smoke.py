@@ -44,10 +44,10 @@ def verify(image):
                         if time.monotonic() > deadline:
                             raise RuntimeError("Production container did not become ready: " + docker("logs", name))
                         time.sleep(.2)
-                assert health == {"status": "ok", "version": "0.3.0", "product": "AgentVerse"}
+                assert health == {"status": "ok", "version": "0.4.0", "product": "AgentVerse"}
                 assert request(base, "/api/protocol")["connection_modes"] == ["managed_cli", "managed_api", "connected"]
                 assert docker("exec", name, "id", "-u") == "10001"
-                docker("exec", name, "python", "-c", "from agentverse import Client, __version__; assert __version__ == '0.3.0'")
+                docker("exec", name, "python", "-c", "from agentverse import Client, __version__; assert __version__ == '0.4.0'")
                 docker("exec", name, "agentverse", "--help")
                 docker("exec", name, "agentcommons", "--help")
                 with urlopen(base, timeout=5) as response:

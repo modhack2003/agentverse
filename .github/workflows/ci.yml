@@ -14,7 +14,7 @@ jobs:
         with:
           version: "latest"
       - run: uv sync --frozen --extra dev --python 3.12
-      - run: uv run ruff check src tests install.py
+      - run: uv run ruff check src tests install.py packaging
       - run: uv run pytest -q
       - uses: actions/setup-node@v4
         with:
@@ -28,7 +28,7 @@ jobs:
       - run: npm run bundle:check
         working-directory: web
       - run: uv build
-      - run: uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.3.0-py3-none-any.whl
+      - run: uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.0-py3-none-any.whl
       - run: uv run python tests/package_smoke.py --package https://github.com/modhack2003/agentverse/archive/${{ github.sha }}.zip
       - run: npx playwright install --with-deps chromium
         working-directory: web
@@ -46,6 +46,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
+        python: ["3.11", "3.14"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -53,4 +54,119 @@ jobs:
         with:
           version: "latest"
       - run: uv build
-      - run: uv run --no-project --python 3.12 python tests/package_smoke.py --wheel dist/agentverse_workspace-0.3.0-py3-none-any.whl
+      - run: uv run --no-project --python ${{ matrix.python }} python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.0-py3-none-any.whl
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --extra dev --extra build --python 3.12
+      - run: uv run pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: npm run bundle:check
+        working-directory: web
+      - run: npx playwright install --with-deps chromium
+        working-directory: web
+      - run: npm test
+        working-directory: web
+      - name: Linux native packaging tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
+      - name: Windows setup packaging tools
+        if: runner.os == 'Windows'
+        run: choco install innosetup --no-progress -y
+      - run: uv run --extra build python packaging/build.py --native-formats
+        env:
+          WINDOWS_SIGNING_PFX: ${{ secrets.WINDOWS_SIGNING_PFX }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+          MACOS_NOTARY_KEY_P8: ${{ secrets.MACOS_NOTARY_KEY_P8 }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER: ${{ secrets.MACOS_NOTARY_ISSUER }}
+      - name: Test portable Linux/macOS package
+        if: runner.os != 'Windows'
+        run: uv run python tests/native_smoke.py --executable dist/native/portable/agentverse/agentverse --archive $(find dist/native -maxdepth 1 -name "*.tar.gz" -print -quit)
+      - name: Test portable Windows package
+        if: runner.os == 'Windows'
+        run: uv run python tests/native_smoke.py --executable dist/native/portable/agentverse/agentverse.exe --archive (Get-ChildItem dist/native/*.zip).FullName
+      - name: Test Linux installed packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package=$(find dist/native -maxdepth 1 -name '*.deb' -print -quit)
+          sudo dpkg -i "$package"
+          uv run python tests/native_smoke.py --executable /opt/agentverse/agentverse
+          sudo dpkg -r agentverse
+          rpm_package=$(find dist/native -maxdepth 1 -name '*.rpm' -print -quit)
+          mkdir -p "$RUNNER_TEMP/rpm-unpacked"
+          cd "$RUNNER_TEMP/rpm-unpacked"
+          rpm2cpio "$GITHUB_WORKSPACE/$rpm_package" | cpio -id
+          cd "$GITHUB_WORKSPACE"
+          uv run python tests/native_smoke.py --executable "$RUNNER_TEMP/rpm-unpacked/opt/agentverse/agentverse"
+      - name: Test macOS app bundle
+        if: runner.os == 'macOS'
+        run: uv run python tests/native_smoke.py --executable dist/native/AgentVerse.app/Contents/Resources/agentverse/agentverse
+      - name: Test Windows installer extraction
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem dist/native/*-windows-setup.exe).FullName
+          $destination = Join-Path $env:RUNNER_TEMP 'AgentVerse installed'
+          $process = Start-Process $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Installer failed' }
+          uv run python tests/native_smoke.py --executable "$destination/agentverse.exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.os }}
+          path: |
+            dist/native/*.tar.gz
+            dist/native/*.zip
+            dist/native/*.deb
+            dist/native/*.rpm
+            dist/native/*.dmg
+            dist/native/*-setup.exe
+            dist/native/*.json
+            dist/native/*.sha256
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: portable-failures-${{ matrix.os }}
+          path: web/test-results/
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [verify, installation, portable]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: portable-*
+          path: release-assets
+          merge-multiple: true
+      - run: python packaging/manifest.py release-assets v0.4.0
+      - name: Publish tested stable packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.4.0 >/dev/null 2>&1; then
+            echo 'Stable v0.4.0 already exists; existing release assets are preserved.'
+          else
+            gh release create v0.4.0 release-assets/* --target "$GITHUB_SHA" --title 'AgentVerse 0.4.0' --notes-file packaging/release-notes.md
+          fi

@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from .config import PROTOCOL_VERSION
+from .processes import module_command
 
 
 class CLIDriver:
@@ -58,7 +59,7 @@ class HTTPDriver:
         return "available", "API jobs adapter configured. Endpoint reachability is verified when a job is started."
 
     def command(self, profile, model, settings):
-        return [sys.executable, "-m", "agentcommons.http_adapter", "{prompt_file}"]
+        return module_command("agentcommons.http_adapter", "{prompt_file}")
 
 
 class ConnectedDriver:

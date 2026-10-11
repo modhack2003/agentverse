@@ -211,9 +211,24 @@ def test_supervisor_launches_model_and_stops_real_worker_and_cli_children(live_s
         snapshot = client.get(f"/api/projects/{p}/snapshot").json()
         assert snapshot["agents"][0]["runtime"]["state"] == "stopped"
         assert snapshot["tasks"][0]["id"] == t["id"] and snapshot["tasks"][0]["status"] == "backlog"
-        for pid in (evidence["pid"], evidence["child_pid"]):
-            with pytest.raises(ProcessLookupError):
-                os.kill(pid, 0)
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            for pid in (evidence["pid"], evidence["child_pid"]):
+                handle = kernel.OpenProcess(0x1000, False, pid)
+                if handle:
+                    exit_code = wintypes.DWORD()
+                    kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+                    assert kernel.GetExitCodeProcess(handle, ctypes.byref(exit_code)) and exit_code.value != 259
+                    kernel.CloseHandle(handle)
+        else:
+            for pid in (evidence["pid"], evidence["child_pid"]):
+                with pytest.raises(ProcessLookupError):
+                    os.kill(pid, 0)
     finally:
         service.shutdown()
 

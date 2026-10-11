@@ -12,8 +12,8 @@ def tool_id(value):
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=80)
-    password: str = Field(min_length=1, max_length=200)
+    username: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=1, max_length=256)
 
 
 class ProjectCreate(BaseModel):

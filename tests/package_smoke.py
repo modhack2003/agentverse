@@ -43,12 +43,12 @@ def verify(wheel):
         result = subprocess.run(install, cwd=cwd, env=env, text=True, capture_output=True)
         assert result.returncode == 0, result.stdout + result.stderr
         config = json.loads((home / "config.json").read_text())
-        python = home / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        python = Path(json.loads((home / "installation.json").read_text())["python"])
         env["PATH"] = str(python.parent)  # No Node.js, npm, Git, uv, or source checkout on PATH.
         installed = subprocess.check_output([str(python), "-c",
             "import agentverse, agentcommons; print(agentverse.__version__); print(agentcommons.__file__)"],
             cwd=cwd, env=env, text=True)
-        assert installed.startswith("0.3.0\n") and str(repo) not in installed, installed
+        assert installed.startswith("0.4.0\n") and str(repo) not in installed, installed
         for alias in ("agentverse", "agentcommons"):
             executable = python.parent / (alias + (".exe" if os.name == "nt" else ""))
             subprocess.run([str(executable), "--help"], cwd=cwd, env=env, check=True, capture_output=True)
@@ -76,7 +76,7 @@ def verify(wheel):
                     deadline = time.monotonic() + 30
                     while True:
                         try:
-                            assert request("/api/health")["version"] == "0.3.0"
+                            assert request("/api/health")["version"] == "0.4.0"
                             break
                         except OSError:
                             assert server.poll() is None, (cwd / "server.log").read_text()

@@ -17,7 +17,7 @@ import httpx
 from .client import Client
 from .config import identity_env, agent_environment
 from .http_adapter import read_state
-from .processes import terminate_process
+from .processes import terminate_process, start_process, external_run
 
 
 class WorkerStopped(BaseException):
@@ -52,8 +52,7 @@ def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None
         env = agent_environment({**os.environ, **(extra_env or {}), "AGENTCOMMONS_PROMPT_FILE": str(prompt_file),
                                  "AGENTVERSE_PROMPT_FILE": str(prompt_file), "NO_COLOR": "1"})
         with (Path(scratch) / "output.log").open("w+") as log:
-            process = subprocess.Popen(argv, cwd=directory, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
+            process = start_process(argv, cwd=directory, env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 try:
                     deadline = time.monotonic() + timeout
@@ -104,7 +103,7 @@ class Worker:
         self.git("rev-parse", "--git-dir")
 
     def git(self, *args, cwd=None):
-        result = subprocess.run(["git", *args], cwd=cwd or self.repo, capture_output=True, text=True,
+        result = external_run(["git", *args], cwd=cwd or self.repo, capture_output=True, text=True,
                                 check=False, timeout=120)
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip())
@@ -272,11 +271,12 @@ class Worker:
             raise
 
     def run(self, once=False):
-        previous = None
+        previous = {}
         if threading.current_thread() is threading.main_thread():
             def interrupted(*_):
                 raise WorkerStopped()
-            previous = signal.signal(signal.SIGTERM, interrupted)
+            for signum in ((signal.SIGTERM, signal.SIGBREAK) if os.name == "nt" else (signal.SIGTERM,)):
+                previous[signum] = signal.signal(signum, interrupted)
         pulse = threading.Thread(target=self.pulse, daemon=True)
         pulse.start()
         print(f"Connected as {self.agent_id}. Waiting for teammates and tasks.", flush=True)
@@ -358,5 +358,5 @@ class Worker:
                 pass
             finally:
                 self.client.close()
-                if previous is not None:
-                    signal.signal(signal.SIGTERM, previous)
+                for signum, handler in previous.items():
+                    signal.signal(signum, handler)

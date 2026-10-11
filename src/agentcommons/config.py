@@ -3,7 +3,7 @@
 import os
 
 PRODUCT = "AgentVerse"
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 PROTOCOL_VERSION = 1
 
 
@@ -22,7 +22,7 @@ def agent_environment(values):
     """Keep tool/provider configuration while removing coordinator credentials."""
     env = dict(values)
     for prefix in ("AGENTVERSE", "AGENTCOMMONS"):
-        for name in ("ADMIN_TOKEN", "NODE_TOKEN", "ADMIN_USERNAME", "ADMIN_PASSWORD"):
+        for name in ("ADMIN_TOKEN", "NODE_TOKEN", "ADMIN_USERNAME", "ADMIN_PASSWORD", "LOCAL_HOME", "WELCOME_TOKEN"):
             env.pop(f"{prefix}_{name}", None)
     # Child CLI processes must not reload coordinator secrets from a nearby .env.
     env["PYTHON_DOTENV_DISABLED"] = "1"

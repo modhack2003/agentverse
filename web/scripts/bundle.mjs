@@ -1,5 +1,5 @@
 // Ship the dashboard with the Python package; CI checks it against a fresh build.
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, readdirSync, readFileSync, rmSync, unlinkSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { join, relative } from 'node:path'
 
@@ -18,6 +18,7 @@ if (process.argv.includes('--check')) {
   }
   console.log('Packaged dashboard matches the fresh frontend build.')
 } else {
+  if (existsSync(target)) for (const path of files(target)) unlinkSync(join(target, path))
   rmSync(target, { recursive: true, force: true })
   cpSync(source, target, { recursive: true })
   console.log('Dashboard copied into the Python package.')

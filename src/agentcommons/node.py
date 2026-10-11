@@ -7,7 +7,6 @@ import re
 import shlex
 import signal
 import subprocess
-import sys
 import threading
 import time
 import uuid
@@ -23,7 +22,7 @@ from .orchestration import NODE_LEASE_SECONDS
 from .config import identity_env, agent_environment, PROTOCOL_VERSION
 from .drivers import drivers, discover_tools
 from .http_adapter import read_state, reconcile, write_state
-from .processes import terminate_process
+from .processes import terminate_process, start_process, external_run, module_command
 
 
 class HTTPConfig(BaseModel):
@@ -104,7 +103,7 @@ class NodeService:
     def inspect(self):
         repo_error = ""
         try:
-            result = subprocess.run(["git", "rev-parse", "--verify", "HEAD"], cwd=self.repo, capture_output=True, timeout=10)
+            result = external_run(["git", "rev-parse", "--verify", "HEAD"], cwd=self.repo, capture_output=True, timeout=10)
             if not self.config.repo or result.returncode:
                 repo_error = "Prepare a project Git clone with an initial commit before launching coding workers."
         except (OSError, subprocess.TimeoutExpired):
@@ -132,19 +131,19 @@ class NodeService:
                     if profile.mode != "connected" and repo_error:
                         availability, reason = "needs_setup", repo_error
                     elif availability == "available" and profile.mode != "connected":
-                        base_check = subprocess.run(
+                        base_check = external_run(
                             ["git", "rev-parse", "--verify", f"refs/heads/{profile.base}"],
                             cwd=self.repo, capture_output=True, timeout=10,
                         )
                         if base_check.returncode:
-                            base_check = subprocess.run(
+                            base_check = external_run(
                                 ["git", "rev-parse", "--verify", f"refs/remotes/origin/{profile.base}"],
                                 cwd=self.repo, capture_output=True, timeout=10,
                             )
                         if base_check.returncode:
                             availability, reason = "needs_setup", f"Git base branch '{profile.base}' is missing on this node."
                         elif profile.push:
-                            remote_check = subprocess.run(
+                            remote_check = external_run(
                                 ["git", "remote", "get-url", "origin"],
                                 cwd=self.repo, capture_output=True, timeout=10,
                             )
@@ -254,9 +253,9 @@ class NodeService:
         if profile.mode == "managed_api":
             # Before a job starts, cancellation is safe. The adapter must journal uncertainty before POST.
             write_state(self.logs / f"{row['run_id']}.json", {"confirmed": profile.driver == "http"})
-        argv = [sys.executable, "-m", "agentcommons.cli", "worker", "--server", self.server,
+        argv = module_command("agentcommons.cli", "worker", "--server", self.server,
                 "--repo", str(self.repo), "--command", shlex.join(command), "--base", profile.base,
-                "--model", row["model"], "--timeout", str(profile.timeout)]
+                "--model", row["model"], "--timeout", str(profile.timeout))
         if not profile.push:
             argv.append("--no-push")
         env = agent_environment({**os.environ, **identity_env(self.server, row["token"], row["model"], settings),
@@ -268,8 +267,7 @@ class NodeService:
         descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         log = os.fdopen(descriptor, "w")
         try:
-            process = subprocess.Popen(argv, cwd=self.repo, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
+            process = start_process(argv, cwd=self.repo, env=env, stdout=log, stderr=subprocess.STDOUT)
         except BaseException:
             log.close()
             raise
@@ -367,11 +365,9 @@ class NodeService:
         self.http.close()
 
     def run(self):
-        if os.name != "posix":
-            raise RuntimeError("Remote node process management currently requires Linux or macOS.")
         previous = {}
         if threading.current_thread() is threading.main_thread():
-            for signum in (signal.SIGTERM, signal.SIGINT):
+            for signum in ((signal.SIGTERM, signal.SIGINT, signal.SIGBREAK) if os.name == "nt" else (signal.SIGTERM, signal.SIGINT)):
                 previous[signum] = signal.signal(signum, lambda *_: self.stop.set())
         try:
             registered = self.register()

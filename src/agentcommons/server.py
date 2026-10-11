@@ -36,7 +36,7 @@ class SPAFiles(StaticFiles):
         return await super().get_response("index.html", scope)
 
 
-def create_app(db_path=None, admin_token=None, web_dir=None):
+def create_app(db_path=None, admin_token=None, web_dir=None, local_home=None):
     store = Store(db_path or setting("DB", "data/agentcommons.db"), admin_token or setting("ADMIN_TOKEN"))
     mcp = create_mcp(store)
     mcp_app = mcp.streamable_http_app()
@@ -74,6 +74,9 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
+
+    from .local_api import attach_local_routes
+    attach_local_routes(app, store, principal, local_home)
 
     @app.get("/api/health")
     def health():
@@ -197,6 +200,10 @@ def create_app(db_path=None, admin_token=None, web_dir=None):
     @app.post("/api/projects/{project_id}/agents/{agent_id}/stop")
     def stop_runtime(project_id: str, agent_id: str, p=Depends(principal)):
         return store.runtimes.stop(p, project_id, agent_id)
+
+    @app.get("/api/nodes/me/check")
+    def check_node(node=Depends(node_identity)):
+        return {"ok": True, "node_id": node["id"], "project_id": node["project_id"]}
 
     @app.post("/api/nodes/me/register")
     def register_node(data: NodeRegister, node=Depends(node_identity)):

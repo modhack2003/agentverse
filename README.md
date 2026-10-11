@@ -8,9 +8,28 @@ The package includes the server, dashboard, terminal UI, Python SDK, and node/wo
 
 ![AgentVerse dashboard](docs/assets/dashboard.png)
 
-## Install and start — one command
+## Install and open
 
-**Requirement:** Python **3.11 or newer** and an internet connection. Check with `python3 --version` (Windows: `py -3 --version`). No Git, Node.js, npm, uv, Docker, or administrator privileges are needed for this installation.
+### Easiest: download a complete app
+
+Open [Downloads / latest release](https://github.com/modhack2003/agentverse/releases/latest), choose your operating system and CPU, and download a package. **Python, Node.js and an internet connection are not needed to run a portable package.** Coding tools and provider access are configured separately.
+
+| Platform | Package | Installation |
+|---|---|---|
+| Windows x64 | `windows-setup.exe` or portable `.zip` | Run setup, or extract the entire ZIP and open `agentverse.exe`. |
+| macOS Apple Silicon / Intel | Matching `.dmg` or portable `.tar.gz` | Copy AgentVerse.app from the disk image to Applications, or extract the archive and open `agentverse`. |
+| Linux x64 / ARM64 | Matching `.tar.gz`, `.deb` or `.rpm` | Extract the whole portable folder and run `./agentverse`, or install the native package using your OS package manager. |
+| Android / iPhone | Browser dashboard | Connect to your running workspace URL. Mobile devices do not run managed agents. |
+
+Linux portable/native packages target **glibc 2.39+ (Ubuntu 24.04 baseline)**. Use the Python installer or Docker on older distributions or Alpine/musl. Windows ARM64 and other operating systems are not tested native targets. Select the correct macOS architecture. Initial native packages may be unsigned; publisher signing/notarization requires the maintainer's certificates. Checksums verify integrity, not publisher identity.
+
+Keep portable folders in a permanent location. Open AgentVerse again to reuse the same workspace. The app starts in the background, finds an available local port, and opens a **first-run wizard**. Choose a user ID/password and optionally create your first project. Passwords are stored as salted hashes; the browser receives a revocable session. Setup links expire after 15 minutes: reopen the app to get a fresh link.
+
+Your data stays in `~/.agentverse`, separate from the application folder. For another location, run `agentverse launch --home /path/to/workspace` (Windows portable: `.\agentverse.exe launch --home "C:\path\to\workspace"`). Each workspace can have its own port and login.
+
+### Alternative: one-command Python installation
+
+Requires **Python 3.11+** and internet. No Git, Node.js, uv, Docker or administrator privileges are needed.
 
 **macOS / Linux:**
 
@@ -24,52 +43,30 @@ python3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.gith
 py -3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py').read(), {'__name__': '__main__'})"
 ```
 
-These commands run this repository's [installer](install.py). To inspect it first, [download install.py](https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py), then run `python3 install.py` or `py -3 install.py` in the download folder.
+To inspect before running, [download install.py](https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py), then run `python3 install.py` or `py -3 install.py`.
 
-The installer:
+The installer installs stable **v0.4.0**, including the built dashboard and dependencies, into a fresh isolated environment under `~/.agentverse/versions`. It creates a persistent launcher, retains the previous version, backs up an existing workspace, and opens the same guided setup. A failed install keeps the working environment and data. Stop an existing server before updating.
 
-1. Creates an isolated Python environment in `~/.agentverse/venv`.
-2. Installs **one AgentVerse package**, including the already-built dashboard and its Python dependencies.
-3. Generates a private administrator token and saves setup in `~/.agentverse/config.json`.
-4. Starts the app at **http://127.0.0.1:8000** and tries to open your browser.
-
-Keep the terminal open while using the app. Copy the token printed there, choose **Access token** in the dashboard, and paste it. If the browser does not open, visit the address yourself. **Ctrl+C** stops the server; your workspace is saved.
-
-Rerunning the installer upgrades the application and keeps the existing token, port, and database. Stop the running server and back up your workspace before upgrading.
-
-### Start again, recover the token, or change the port
-
-The installer prints a restart command for your installation. With the default location:
-
-| Action | macOS / Linux | Windows PowerShell |
+| Action | macOS / Linux installer | Windows PowerShell installer |
 |---|---|---|
-| Start | `~/.agentverse/venv/bin/agentverse serve --home ~/.agentverse` | `& "$HOME\.agentverse\venv\Scripts\agentverse.exe" serve --home "$HOME\.agentverse"` |
-| Show your saved login token | `~/.agentverse/venv/bin/agentverse setup --no-start` | `& "$HOME\.agentverse\venv\Scripts\agentverse.exe" setup --no-start` |
-| Save and use a different port | `~/.agentverse/venv/bin/agentverse setup --port 8001` | `& "$HOME\.agentverse\venv\Scripts\agentverse.exe" setup --port 8001` |
+| Open again | `~/.agentverse/agentverse launch` | `& "$HOME\.agentverse\agentverse.cmd" launch` |
+| Status | `~/.agentverse/agentverse status` | `& "$HOME\.agentverse\agentverse.cmd" status` |
+| Stop | `~/.agentverse/agentverse stop` | `& "$HOME\.agentverse\agentverse.cmd" stop` |
+| Recover access token | `~/.agentverse/agentverse setup --no-start` | `& "$HOME\.agentverse\agentverse.cmd" setup --no-start` |
 
-For installer options, download the file and run:
+Below, `agentverse` means your installed command, the full launcher path above, or `./agentverse` / `.\agentverse.exe` inside a portable folder. The installer does not modify your global PATH. The Windows `.cmd` launcher works without changing PowerShell execution policy.
 
 ```bash
-python3 install.py --help
-python3 install.py --no-start              # install and save setup without starting
-python3 install.py --no-browser            # start without opening a browser
+python3 install.py --no-start                 # prepare without running a server
 python3 install.py --home /path/to/workspace --port 8001
+python3 install.py --source /path/app.whl --wheelhouse /path/dependency-wheels --no-start
 ```
 
-For a custom location, include `--home /path/to/workspace` when running `serve` or `setup` later. On Windows, use `py -3` instead of `python3`.
-
-Already manage your own Python environment? Install the complete package directly:
-
-```bash
-python -m pip install "https://github.com/modhack2003/agentverse/archive/refs/heads/main.zip"
-python -m agentcommons.cli setup
-```
-
-`agentcommons` is the compatible command/module name; `agentverse` is the preferred installed CLI. The GitHub archive includes the compiled UI, so this path also needs no frontend build. The package name is `agentverse-workspace`; these instructions install it from GitHub rather than assuming a PyPI release.
+Portable downloads are the simplest offline installation. The wheelhouse option requires all matching dependency wheels and Python already installed. Users managing their own Python environment can install `https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.0.zip` with pip and run `agentverse launch`. The package name is `agentverse-workspace`; this does not assume a PyPI publication.
 
 ## Your first project
 
-1. Log in with the administrator token.
+1. Complete the first-run wizard, or sign in using your saved user ID/password or administrator token.
 2. Click **Create project** beside **PROJECTS**. Give it a name and a clear goal.
 3. Add work in **Task board**. Describe the expected result and any dependencies or required capabilities.
 4. Open **Agents & connections**, create a teammate, and select a connection mode from the table below. Save its connection token when shown.
@@ -107,7 +104,7 @@ agentverse worker --server https://agents.your-domain.com \
   --repo /srv/projects/your-project --command 'opencode run {prompt}'
 ```
 
-This example requires an installed/authenticated command that accepts prompts and emits the structured [worker result](docs/agents.md#unattended-worker-contract). A plain chat-completions endpoint is not a coding jobs API. See the [vendor/version acceptance matrix](docs/vendor-acceptance.md): deterministic CLI/API/MCP fixtures are tested; live native vendor/model combinations are explicitly unverified. Managed subprocess nodes target Linux/macOS; do not assume Windows managed-node support from the cross-platform installer.
+This example requires an installed/authenticated command that accepts prompts and emits the structured [worker result](docs/agents.md#unattended-worker-contract). A plain chat-completions endpoint is not a coding jobs API. See the [vendor/version acceptance matrix](docs/vendor-acceptance.md): deterministic CLI/API/MCP fixtures are tested; live native vendor/model combinations are explicitly unverified. Managed subprocess nodes use POSIX process groups on Linux/macOS and kill-on-close Windows jobs on Windows. The CI matrix tests real process cleanup and managed-worker cancellation; live vendor acceptance remains separate.
 
 ## What you can do
 
@@ -170,21 +167,55 @@ docker compose -f compose.yml -f compose.production.yml up -d --build
 
 Caddy serves the dashboard, API, WebSocket, and MCP over HTTPS. The application port remains bound to loopback. Docker installations and Python-installer installations use separate data locations.
 
-## Data, upgrades, and common problems
+## Startup, updates, backup and recovery
 
-For the Python installer, your local workspace lives in **`~/.agentverse/data/agentverse.db`** and credentials in **`~/.agentverse/config.json`**. Keep the token private. Stop the server before backing up the entire `~/.agentverse` directory; SQLite may also have `-wal` and `-shm` files. Restore to the same location, or rerun the installer with `--home` pointing to the restored directory. Removing the virtual environment alone does not delete your workspace; rerun the installer to recreate it.
+The workspace database is `~/.agentverse/data/agentverse.db`; credentials are in `~/.agentverse/config.json`. Add `--home /path/to/workspace` to every command when using a custom workspace.
+
+```bash
+agentverse launch                         # start in background and open browser
+agentverse start --no-browser              # headless background startup
+agentverse stop
+agentverse restart
+agentverse status
+agentverse shortcut                       # add a per-user app shortcut
+agentverse autostart                       # start when you sign in
+agentverse autostart --remove
+agentverse service                         # Linux systemd user service / macOS LaunchAgent / Windows login shortcut
+agentverse backup --output /path/backup.zip # consistent SQLite backup, including while running
+agentverse stop
+agentverse update                          # stable update, pre-update backup, earlier version retained
+agentverse rollback                        # select previous app version; preserve workspace data
+agentverse restore /path/backup.zip        # validate integrity and DB before replacing a stopped workspace
+agentverse uninstall                       # remove installer environments; keep data by default
+agentverse uninstall --delete-data         # explicitly remove data and saved backups too
+```
+
+Restore refuses to run while the local server holds the workspace lock and creates a recovery backup before replacing existing data. Backups contain credentials and project content: keep them private. Rollback changes the application only; use the recorded pre-update backup if an older application cannot read your current database. No automatic downgrade of data occurs.
+
+Native updates download the platform archive listed in a stable release manifest, verify its SHA-256, and install it alongside the current app. Existing native launchers follow the selected version. Manual/offline native updates use `agentverse update --source /path/package.tar.gz --sha256 EXPECTED_HASH`. Python installations use `update --source /path/package.whl` for a trusted local package. Do not remove old application folders until you no longer need rollback. Native OS package updates can also be installed through their original installer/package manager.
+
+On Linux, `service` installs and enables a **systemd user service**; a headless VPS may need its administrator to enable user lingering for startup after reboot. macOS uses a LaunchAgent at login. Windows uses a per-user login shortcut, not an SCM service that runs before sign-in. Startup is opt-in. Use `service --remove` to remove a user service.
+
+The dashboard's **App settings** offers backup downloads, diagnostics export and Stop. **Agents & connections → Connection wizard** creates/imports/validates node profiles and checks current presence. Tool/provider authentication stays on the agent machine. Use `doctor --config node.json` there for detailed local checks.
+
+```bash
+agentverse doctor --home /path/to/workspace --export diagnostics.json
+agentverse doctor --server https://your-workspace.example --mcp # uses AGENTVERSE_AGENT_TOKEN
+agentverse doctor --server https://your-workspace.example --node-token # uses AGENTVERSE_NODE_TOKEN
+```
+
+Connection checks are bounded and read-only: they distinguish server/network, authentication and MCP handshake failures without registering or taking over a node session. Diagnostic exports omit tokens, local paths, commands and provider environment values. Model execution and native client attachment still require a real bounded acceptance task.
 
 | Problem | What to do |
 |---|---|
-| Python is missing or older than 3.11 | Install a current Python 3 version, then rerun. On Windows, use the `py -3` launcher. |
-| `venv` / `ensurepip` is missing on Debian/Ubuntu | Install the matching `python3-venv` OS package, then rerun. |
-| Download or dependency installation fails | Check your internet connection, proxy, and Python certificate setup. The installer reports the failure; rerun after correcting it. |
-| Port 8000 is already in use | Stop the other server, or run `setup --port 8001`. Open the new address. |
-| Dashboard does not open automatically | Open the printed local URL manually; the terminal must still be running. |
-| Login fails | Select **Access token** and copy the saved token using `setup --no-start`. Password login is optional and is not configured by the installer. |
-| `agentverse` command not found | Use the full path in the restart table. The installer isolates commands rather than changing your shell configuration. |
-| Agent stays offline or does not work | Check its connection mode, token, heartbeat/worker loop, node diagnostics, tool login, and worker contract. See the connection guides above. |
-| Existing setup file is invalid | Restore a backup of `config.json`. Setup refuses to overwrite invalid credentials or silently reset the workspace. |
+| Python is missing | Use a complete portable download, or install Python 3.11+ for the Python installer. |
+| `venv` / `ensurepip` is missing | On Debian/Ubuntu, install the matching `python3-venv` package, or use a portable download. |
+| App does not open | Read `~/.agentverse/server.log`, run `status`, and reopen the launcher. Recover the administrator token with `setup --no-start` if browser opening is unavailable. |
+| Default port is occupied | `launch` finds and saves an available port. Use `launch --port 8001` to choose one explicitly; stop the workspace first. |
+| Login fails | Use your saved user ID/password, or recover the administrator token with `setup --no-start`. |
+| Tool is detected but tasks fail | Check provider login, supported headless command/model, Git clone and node diagnostics. Presence does not prove successful model work. |
+| Upgrade fails | The working environment and data are retained. Check network/proxy/certificates, then retry or use the recorded previous version. |
+| Configuration is damaged | Restore a workspace backup; setup never silently replaces invalid credentials. |
 
 ### Existing AgentCommons deployments
 
@@ -213,10 +244,10 @@ Open http://localhost:5173; Vite proxies API/MCP requests to the server on port 
 **After changing the frontend, run `npm run bundle` in `web/` and commit the updated `src/agentcommons/web/` assets.** This builds and refreshes the dashboard shipped with the Python wheel and GitHub archive. CI compares the committed bundle with a fresh build to prevent stale UI packages.
 
 ```bash
-uv run ruff check src tests install.py
+uv run ruff check src tests install.py packaging
 uv run pytest -q
 uv build
-uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.3.0-py3-none-any.whl
+uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.0-py3-none-any.whl
 # In web/:
 npm run build
 npm run bundle:check
@@ -225,6 +256,8 @@ npm test
 ```
 
 The package smoke check installs into a clean environment outside the checkout, serves bundled assets without Node/Git/uv on runtime PATH, and tests authentication, projects/tasks, peer/MCP attachment, setup reruns, and restart persistence. Backend/browser tests also cover collaboration, conflicts, connection modes, cancellation, recovery, TUI, accessibility, and mobile layouts. These checks use deterministic coding/model fixtures, not live vendor-model completion.
+
+Build a portable package on its target OS: `uv sync --extra dev --extra build`, then `uv run --extra build python packaging/build.py`. Run `uv run python tests/native_smoke.py --executable dist/native/portable/agentverse/agentverse` (Windows adds `.exe`). See [platform packaging and signing](docs/platform-installation.md).
 
 Production-image check: `docker build -t agentverse:check .`, then `uv run python tests/container_smoke.py --image agentverse:check`. GitHub Actions runs package, browser, backend, bundle-freshness, and container checks.
 

@@ -111,7 +111,7 @@ def assert_heartbeat_stopped(heartbeat):
 def kill_leftover(pid_file):
     if pid_file.exists():
         try:
-            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            os.kill(int(pid_file.read_text()), signal.SIGTERM if os.name == "nt" else signal.SIGKILL)
         except ProcessLookupError:
             pass
 
@@ -140,7 +140,8 @@ def test_command_cleanup_escalates_ignoring_descendants(tmp_path, ending):
 def test_supervisor_cleanup_escalates_ignoring_descendants(tmp_path, monkeypatch, ending):
     wrapper, heartbeat, pid_file = child_wrapper(tmp_path, ending == "observed_exit")
     log = (tmp_path / "worker.log").open("w")
-    process = subprocess.Popen([sys.executable, str(wrapper)], start_new_session=True, stdout=log)
+    from agentcommons.processes import start_process
+    process = start_process([sys.executable, str(wrapper)], stdout=log)
     child = Child("run_" + "a" * 32, process, log)
     service = NodeService("http://127.0.0.1:1", "fixture", NodeConfig(profiles=[{
         "id": "connected", "name": "Connected", "kind": "custom", "mode": "connected"

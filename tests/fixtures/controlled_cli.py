@@ -13,11 +13,15 @@ child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
 
 
 def stopped(*_):
+    if os.name == "nt":
+        child.terminate()
     child.wait(timeout=5)
     sys.exit(0)
 
 
 signal.signal(signal.SIGTERM, stopped)
+if os.name == "nt":
+    signal.signal(signal.SIGBREAK, stopped)
 Path(os.environ["AGENTCOMMONS_TEST_TRACE"]).write_text(json.dumps({
     "pid": os.getpid(), "child_pid": child.pid, "argv_model": sys.argv[2],
     "env_model": os.getenv("AGENTCOMMONS_MODEL"), "context_model": context["selected_model"],

@@ -17,3 +17,7 @@ web/playwright-report/
 web/*.tsbuildinfo
 *.egg-info/
 .agentcommons-worktrees/
+
+dist/
+build/
+*.spec

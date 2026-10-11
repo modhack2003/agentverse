@@ -11,6 +11,8 @@ import { api, ApiError } from './api'
 import ConflictComparison from './ConflictComparison'
 import Modal from './Dialog'
 import RemoteAgents from './RemoteAgents'
+import Onboarding, { hasSetupLink } from './Onboarding'
+import WorkspaceTools from './WorkspaceTools'
 import ConnectionDetails from './ConnectionDetails'
 import { ThemePicker } from './Themes'
 import { readStorage, writeStorage, removeStorage } from './storage'
@@ -62,6 +64,7 @@ function Login({ onLogin }: { onLogin: (token: string) => void }) {
   const [mode, setMode] = useState<'token' | 'password'>('token')
   const [username, setUsername] = useState(''), [password, setPassword] = useState('')
   const [token, setToken] = useState(''), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  useEffect(() => { api<{ password_login: boolean }>('', '/local/onboarding').then(r => { if (r.password_login && (r as { local?: boolean }).local) setMode('password') }).catch(() => {}) }, [])
   async function submit(e: FormEvent) {
     e.preventDefault(); setBusy(true); setError('')
     try {
@@ -178,7 +181,8 @@ function Chat({ snapshot, token, reload, full = false, initialRecipient = '' }: 
 }
 
 export default function App() {
-  const [token, setToken] = useState(() => readStorage('agentverse-token', true) || readStorage('agentcommons-token', true) || '')
+  const [setupPending, setSetupPending] = useState(hasSetupLink)
+  const [token, setToken] = useState(() => hasSetupLink ? '' : readStorage('agentverse-token', true) || readStorage('agentcommons-token', true) || '')
   const [projects, setProjects] = useState<Project[]>([]), [projectId, setProjectId] = useState('')
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null), [section, setSection] = useState('overview')
   const [dialog, setDialog] = useState<Dialog>(null), [task, setTask] = useState<Task | null>(null), [memory, setMemory] = useState<Memory | null>(null)
@@ -307,6 +311,7 @@ export default function App() {
     try { await navigator.clipboard.writeText(text); setToast('Copied to clipboard.') } catch { setFormError('Clipboard access unavailable. Select and copy the text below.') }
   }
 
+  if (!token && setupPending) return <Onboarding onLogin={value => { setSetupPending(false); login(value) }} />
   if (!token) return <Login onLogin={login} />
   const agents = snapshot?.agents || [], tasks = snapshot?.tasks || []
   const online = agents.filter(a => a.online).length, done = tasks.filter(t => t.status === 'done').length
@@ -326,7 +331,7 @@ export default function App() {
        <div className="project-list">{projects.map(p => <button key={p.id} className={`project-item ${projectId === p.id ? 'selected' : ''}`} onClick={() => { setDmRecipient(''); setProjectId(p.id); setMobileNav(false) }}><span className={`status-dot ${p.status === 'active' ? 'purple' : 'muted'}`} /><span>{p.name}</span>{projectId === p.id && <ChevronRight size={13} />}</button>)}{projects.length === 0 && <span className="sidebar-empty">Your next big idea goes here.</span>}</div>
       <div className="sidebar-bottom"><div className="team-principle"><span><Sparkles size={18} /></span><strong>Better, together.</strong><p>Every agent has a voice.<br />Every project has a team.</p></div><button className="profile-button" disabled={loggingOut} aria-label="Sign out" title={token.startsWith('web_') ? 'Revoke this web session and sign out' : 'Sign out of this browser. Reusable access tokens remain valid until replaced or revoked.'} onClick={() => void logout()}><span className="profile-avatar">{admin ? 'Y' : 'A'}</span><span><strong>{admin ? 'Workspace owner' : 'Agent session'}</strong><small>Connected remotely</small></span><LogOut size={16} /></button></div>
     </aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Open navigation"><Menu size={20} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{project?.name || 'Getting started'}</strong></div><div className="topbar-actions"><span className={`connection-state ${live ? 'connected' : ''}`}><span className={`status-dot ${live ? 'green' : 'amber'}`} />{live ? 'Live workspace' : projectId ? 'Connecting…' : 'Ready to connect'}</span><ThemePicker /><a href="https://github.com/modhack2003/agentverse" target="_blank" rel="noreferrer" className="docs-link">Documentation <ArrowUpRight size={13} /></a><span className="top-avatar">{admin ? 'Y' : 'A'}</span></div></header>
+    <div className="main-shell"><header className="topbar"><div className="breadcrumbs"><button className="icon-button mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Open navigation"><Menu size={20} /></button><span>Workspace</span><ChevronRight size={14} /><strong>{project?.name || 'Getting started'}</strong></div><div className="topbar-actions"><span className={`connection-state ${live ? 'connected' : ''}`}><span className={`status-dot ${live ? 'green' : 'amber'}`} />{live ? 'Live workspace' : projectId ? 'Connecting…' : 'Ready to connect'}</span>{admin && <WorkspaceTools token={token} />}<ThemePicker /><a href="https://github.com/modhack2003/agentverse" target="_blank" rel="noreferrer" className="docs-link">Documentation <ArrowUpRight size={13} /></a><span className="top-avatar">{admin ? 'Y' : 'A'}</span></div></header>
       <main className="main-content">
         {logoutError && <div className="error-banner" role="alert">{logoutError}<button disabled={loggingOut} onClick={() => void logout()}>Retry sign out</button></div>}
         {error && <div className="error-banner" role="alert">{error}<button onClick={logout}>Reconnect</button></div>}

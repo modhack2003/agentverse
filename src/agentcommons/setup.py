@@ -34,6 +34,15 @@ def read_setup(home):
             or data.get("database") != "data/agentverse.db"):
         raise ValueError(f"Invalid setup file: {path}. Restore your backup; it has not been overwritten.")
     valid_port(data.get("port"))
+    login = data.get("login")
+    if login is not None:
+        import re
+        if (not isinstance(login, dict) or not isinstance(login.get("username"), str)
+                or not re.fullmatch(r"[A-Za-z0-9_.@-]{1,100}", login["username"])
+                or not re.fullmatch(r"scrypt\$[a-f0-9]{32}\$[a-f0-9]{128}", str(login.get("password_hash", "")))):
+            raise ValueError(f"Invalid login in {path}; it has not been overwritten.")
+    if "onboarding_complete" in data and type(data["onboarding_complete"]) is not bool:
+        raise ValueError(f"Invalid setup file: {path}; it has not been overwritten.")
     return data
 
 
@@ -54,7 +63,15 @@ def prepare_setup(home, port=None):
     """Create once; reruns preserve the token and database."""
     if port is not None:
         valid_port(port)
+    new_home = not home.exists()
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name == "nt" and new_home:
+        import getpass
+        import subprocess
+        user = os.getenv("USERDOMAIN", "")
+        user = (user + "\\" if user else "") + getpass.getuser()
+        subprocess.run([str(Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32/icacls.exe"), str(home), "/inheritance:r", "/grant:r", user + ":(OI)(CI)F"],
+                       check=True, capture_output=True)
     path = home / "config.json"
     if path.exists() or path.is_symlink():
         data = read_setup(home)
@@ -75,6 +92,7 @@ def apply_setup(home, data, override=False):
     for name, value in (("ADMIN_TOKEN", data["admin_token"]), ("DB", str(home / data["database"]))):
         if override or not any(f"{prefix}_{name}" in os.environ for prefix in ("AGENTVERSE", "AGENTCOMMONS")):
             os.environ[f"AGENTVERSE_{name}"] = value
+    os.environ["AGENTVERSE_LOCAL_HOME"] = str(home)
 
 
 def show_setup(home, data):
@@ -86,7 +104,7 @@ def show_setup(home, data):
     print("Keep the token private. Setup reruns keep the same token and workspace.", flush=True)
 
 
-def open_when_ready(port):
+def open_when_ready(port, fragment=""):
     def open_browser():
         url = f"http://127.0.0.1:{port}"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -94,7 +112,7 @@ def open_when_ready(port):
             try:
                 with opener.open(url + "/api/health", timeout=0.2) as response:
                     if response.status == 200:
-                        webbrowser.open(url)
+                        webbrowser.open(url + fragment)
                         return
             except (OSError, urllib.error.URLError):
                 time.sleep(0.1)
