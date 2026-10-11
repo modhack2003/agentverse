@@ -120,6 +120,7 @@ test('required boolean starts unset and explicit false survives save and reload'
   await expect(page.getByLabel('Allow writes', { exact: true })).toHaveValue('false')
   await page.getByLabel('Allow writes', { exact: true }).selectOption('true')
   await page.getByRole('button', { name: 'Save runtime' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
   const after = await request.get(`${root}/projects/${p.id}/snapshot`, { headers }).then(r => r.json())
   expect(after.agents.find((row: { id: string }) => row.id === a.agent.id).runtime.settings.allow).toBe(true)
 })

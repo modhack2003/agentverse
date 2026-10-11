@@ -98,9 +98,9 @@ def verify(executable, package_archive=None):
                 occupied.bind(('127.0.0.1', 8000))
                 occupied.listen()
             except OSError:
-                # A prior browser fixture may still own 8000; it also exercises the occupied-port path.
-                with socket.create_connection(('127.0.0.1', 8000), timeout=2):
-                    pass
+                # A prior fixture, a Windows reserved port or TIME_WAIT can also
+                # prevent binding. The saved-port assertion below still verifies fallback.
+                pass
             run('start', '--home', home, '--no-browser')
         config = json.loads((home / 'config.json').read_text(encoding="utf-8"))
         assert config['port'] != 8000
