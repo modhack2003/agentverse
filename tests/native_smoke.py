@@ -158,6 +158,12 @@ def verify(executable, package_archive=None):
             metadata = json.loads((home / 'installation.json').read_text(encoding="utf-8"))
             assert metadata['previous']['kind'] == 'native'
             assert Path(metadata['executable']).exists() and Path(metadata['recovery_backup']).exists()
+            launcher = home / ('agentverse.cmd' if os.name == 'nt' else 'agentverse')
+            launcher_command = [str(launcher), 'status']
+            if os.name == 'nt':
+                launcher_command = [str(Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/cmd.exe'), '/c', *launcher_command]
+            selected = json.loads(subprocess.check_output(launcher_command, cwd=cwd, env=env, text=True, encoding='utf-8'))
+            assert selected['home'] == str(home) and selected['configured']
             run('rollback', '--home', home)
             assert json.loads((home / 'installation.json').read_text(encoding="utf-8"))['executable'] == str(executable)
         if package_archive:

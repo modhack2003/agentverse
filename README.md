@@ -25,7 +25,7 @@ Linux portable/native packages target **glibc 2.39+ (Ubuntu 24.04 baseline)**. U
 
 Keep portable folders in a permanent location. Open AgentVerse again to reuse the same workspace. The app starts in the background, finds an available local port, and opens a **first-run wizard**. Choose a user ID/password and optionally create your first project. Passwords are stored as salted hashes; the browser receives a revocable session. Setup links expire after 15 minutes: reopen the app to get a fresh link.
 
-Your data stays in `~/.agentverse`, separate from the application folder. For another location, run `agentverse launch --home /path/to/workspace` (Windows portable: `.\agentverse.exe launch --home "C:\path\to\workspace"`). Each workspace can have its own port and login.
+Your data stays in `~/.agentverse`, separate from the application folder. For another location, run `agentverse launch --home /path/to/workspace` (Windows portable: `.\agentverse.exe launch --home "C:\path\to\workspace"`). Each workspace can have its own port and login. Persistent launchers retain their installed workspace location; an explicit `--home` overrides it.
 
 ### Alternative: one-command Python installation
 

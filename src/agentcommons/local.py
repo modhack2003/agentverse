@@ -18,6 +18,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
+from .privacy import private_acl
 from .config import VERSION
 from .processes import module_command, external_environment, external_loader
 from .setup import prepare_setup, read_setup, open_browser
@@ -30,6 +31,7 @@ def private_write(path, content):
     try:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, 'wb') as stream:
+            private_acl(temporary)
             stream.write(content)
         os.replace(temporary, path)
     finally:
@@ -42,12 +44,12 @@ def exclusive(home, name='server'):
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = home / (name + '.lock')
     fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
-    with os.fdopen(fd, 'r+b') as stream:
+    with os.fdopen(fd, 'r+b', buffering=0) as stream:
         try:
             if os.name == 'nt':
                 import msvcrt
-                stream.write(b'0')
-                stream.flush()
+                if os.fstat(stream.fileno()).st_size == 0:
+                    stream.write(b'0')
                 stream.seek(0)
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             else:
@@ -92,14 +94,14 @@ def local_request(home, path, data=None, timeout=3):
 
 def status(home):
     if not (home / 'config.json').exists():
-        return {'running': False, 'configured': False}
+        return {'running': False, 'configured': False, 'home': str(home)}
     try:
         result = local_request(home, 'status')
         if result.get('home') != str(home):
             raise ValueError('A different workspace is using this port.')
         return result
     except (OSError, urllib.error.URLError):
-        return {'running': False, 'configured': True, 'port': read_setup(home)['port']}
+        return {'running': False, 'configured': True, 'home': str(home), 'port': read_setup(home)['port']}
 
 
 def stop(home):

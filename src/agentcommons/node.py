@@ -22,6 +22,7 @@ from .orchestration import NODE_LEASE_SECONDS
 from .config import identity_env, agent_environment, PROTOCOL_VERSION
 from .drivers import drivers, discover_tools
 from .http_adapter import read_state, reconcile, write_state
+from .privacy import private_acl
 from .processes import terminate_process, start_process, external_run, module_command
 
 
@@ -259,7 +260,7 @@ class NodeService:
         if not profile.push:
             argv.append("--no-push")
         env = agent_environment({**os.environ, **identity_env(self.server, row["token"], row["model"], settings),
-                "AGENTVERSE_RUN_ID": row["run_id"], "AGENTVERSE_RUNTIME_MODE": profile.mode,
+                "AGENTVERSE_RUN_ID": row["run_id"], "AGENTVERSE_RUNTIME_MODE": profile.mode, "PYTHONIOENCODING": "utf-8",
                 "AGENTVERSE_ADAPTER_STATE": str(self.logs / f"{row['run_id']}.json")})
         if profile.http:
             env["AGENTVERSE_HTTP_CONFIG"] = profile.http.model_dump_json()
@@ -267,6 +268,7 @@ class NodeService:
         descriptor = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         log = os.fdopen(descriptor, "w")
         try:
+            private_acl(log_path)
             process = start_process(argv, cwd=self.repo, env=env, stdout=log, stderr=subprocess.STDOUT)
         except BaseException:
             log.close()

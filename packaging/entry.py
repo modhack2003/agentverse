@@ -23,7 +23,7 @@ else:
     # Existing desktop shortcuts follow the selected version after an update/rollback.
     if os.getenv('AGENTVERSE_REDIRECTED') != '1':
         arguments = sys.argv[1:]
-        home = Path.home() / '.agentverse'
+        home = Path(os.environ['AGENTVERSE_HOME']).expanduser().resolve() if os.getenv('AGENTVERSE_HOME') else Path.home() / '.agentverse'
         if '--home' in arguments and arguments.index('--home') + 1 < len(arguments):
             home = Path(arguments[arguments.index('--home') + 1]).expanduser().resolve()
         metadata = home / 'installation.json'

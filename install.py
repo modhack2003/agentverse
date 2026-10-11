@@ -27,12 +27,12 @@ SOURCE = f'https://github.com/modhack2003/agentverse/archive/refs/tags/v{VERSION
 @contextmanager
 def installation_lock(home, name):
     path = home / (name + '.lock')
-    with os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0o600), 'r+b') as stream:
+    with os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT, 0o600), 'r+b', buffering=0) as stream:
         try:
             if os.name == 'nt':
                 import msvcrt
-                stream.write(b'0')
-                stream.flush()
+                if os.fstat(stream.fileno()).st_size == 0:
+                    stream.write(b'0')
                 stream.seek(0)
                 msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
             else:
@@ -113,12 +113,12 @@ def write_launcher(home, python):
     if os.name == 'nt':
         def quote(value):
             return "'" + str(value).replace("'", "''") + "'"
-        content = '& ' + ' '.join(quote(value) for value in args) + ' @args\n'
-        atomic_write(home / 'agentverse.ps1', content.encode())
-        batch = '@echo off\nchcp 65001 >nul\nsetlocal DisableDelayedExpansion\n' + subprocess.list2cmdline(args).replace('%', '%%') + ' %*\n'
+        content = '$env:AGENTVERSE_HOME = ' + quote(home) + '\n& ' + ' '.join(quote(value) for value in args) + ' @args\n'
+        atomic_write(home / 'agentverse.ps1', content.encode('utf-8-sig'))
+        batch = '@echo off\nchcp 65001 >nul\nsetlocal DisableDelayedExpansion\nset \"AGENTVERSE_HOME=' + str(home).replace('%', '%%') + '\"\n' + subprocess.list2cmdline(args).replace('%', '%%') + ' %*\n'
         atomic_write(home / 'agentverse.cmd', batch.encode())
     else:
-        content = '#!/bin/sh\nexec ' + shlex.join(args) + ' "$@"\n'
+        content = '#!/bin/sh\nexport AGENTVERSE_HOME=' + shlex.quote(str(home)) + '\nexec ' + shlex.join(args) + ' "$@"\n'
         path = home / 'agentverse'
         atomic_write(path, content.encode())
         path.chmod(0o700)

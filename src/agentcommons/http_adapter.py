@@ -10,6 +10,8 @@ from pathlib import Path
 
 import httpx
 
+from .privacy import private_acl
+
 TERMINAL = {"completed", "failed", "cancelled"}
 
 
@@ -28,7 +30,8 @@ def write_state(path, data):
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(".tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w") as output:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        private_acl(temporary)
         json.dump(data, output)
     os.replace(temporary, target)
 
@@ -83,6 +86,8 @@ def run(prompt_file):
         cancelled = True
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, stop)
     state = {"confirmed": False, "connector": config, "job_id": None}
     # The caller provides an idempotency key so a lost start response can be recovered without duplicate jobs.
     request_id = os.getenv("AGENTVERSE_RUN_ID", "") + ":" + Path(prompt_file).parent.name

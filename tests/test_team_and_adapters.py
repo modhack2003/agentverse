@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 import shlex
 import subprocess
 import sys
@@ -204,7 +206,12 @@ def test_real_http_bridge_completion_lost_starts_and_cancellation(tmp_path, monk
         assert evidence["payload"]["model"] == "fixture-model"
         assert evidence["authorization"] == "Bearer node-local-provider-fixture"
         assert evidence["idempotency"] == evidence["payload"]["request_id"]
-        assert journal.stat().st_mode & 0o777 == 0o600
+        if os.name == 'nt':
+            executable = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/icacls.exe'
+            acl = subprocess.check_output([str(executable), str(journal)], text=True, errors='replace')
+            assert '(I)' not in acl  # Journal grants its owner access, without inherited readers.
+        else:
+            assert journal.stat().st_mode & 0o777 == 0o600
         if mode == "lost-unsafe":
             assert not reconcile(journal)
             evidence.update(state="cancelled", cancelled=True)

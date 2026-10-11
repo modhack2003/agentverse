@@ -22,9 +22,10 @@ def verify(wheel):
            and key not in {"PYTHONPATH", "VIRTUAL_ENV", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                            "http_proxy", "https_proxy", "all_proxy"}}
     env["PYTHON_DOTENV_DISABLED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
     with tempfile.TemporaryDirectory(prefix="agentverse-package-") as temporary:
         cwd = Path(temporary)
-        home = cwd / "installation with spaces"
+        home = cwd / "installation with spaces ü"
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
@@ -45,6 +46,17 @@ def verify(wheel):
         config = json.loads((home / "config.json").read_text())
         python = Path(json.loads((home / "installation.json").read_text())["python"])
         env["PATH"] = str(python.parent)  # No Node.js, npm, Git, uv, or source checkout on PATH.
+        launcher = home / ("agentverse.cmd" if os.name == "nt" else "agentverse")
+        launcher_command = [str(launcher), 'status']
+        if os.name == 'nt':
+            launcher_command = [str(Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/cmd.exe'), '/c', *launcher_command]
+        launcher_status = json.loads(subprocess.check_output(launcher_command, cwd=cwd, env=env, text=True, encoding='utf-8'))
+        assert launcher_status['configured'] and launcher_status['home'] == str(home)
+        if os.name == 'nt':
+            powershell = Path(os.environ.get('SystemRoot', 'C:/Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+            output = subprocess.check_output([str(powershell), '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+                                              str(home / 'agentverse.ps1'), 'status'], cwd=cwd, env=env, text=True, encoding='utf-8')
+            assert json.loads(output)['home'] == str(home)
         installed = subprocess.check_output([str(python), "-c",
             "import agentverse, agentcommons; print(agentverse.__version__); print(agentcommons.__file__)"],
             cwd=cwd, env=env, text=True)

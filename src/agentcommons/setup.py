@@ -9,8 +9,11 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
+from .privacy import private_acl
+
 
 def home_path(value=None):
+    value = value or os.getenv("AGENTVERSE_HOME")
     return Path(value).expanduser().resolve() if value else Path.home() / ".agentverse"
 
 
@@ -52,6 +55,7 @@ def write_setup(home, data):
     try:
         fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            private_acl(temporary)
             json.dump(data, stream, indent=2)
             stream.write("\n")
         os.replace(temporary, path)
@@ -65,7 +69,7 @@ def prepare_setup(home, port=None):
         valid_port(port)
     new_home = not home.exists()
     home.mkdir(parents=True, exist_ok=True, mode=0o700)
-    if os.name == "nt" and new_home:
+    if os.name == "nt" and (new_home or not (home / "config.json").exists()):
         import getpass
         import subprocess
         user = os.getenv("USERDOMAIN", "")
