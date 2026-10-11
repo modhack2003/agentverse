@@ -1,4 +1,5 @@
 import json
+import shlex
 import subprocess
 import sys
 import threading
@@ -178,7 +179,7 @@ def test_real_http_bridge_completion_lost_starts_and_cancellation(tmp_path, monk
         env = {"AGENTVERSE_HTTP_CONFIG": json.dumps({"url": url, "token_env": "FIXTURE_API_TOKEN"}),
                "AGENTVERSE_ADAPTER_STATE": str(journal), "AGENTVERSE_RUNTIME_MODE": "managed_api",
                "AGENTVERSE_RUN_ID": "fixture", "AGENTVERSE_MODEL": "fixture-model", "AGENTVERSE_SETTINGS": '{"effort":"high"}'}
-        command = f"{sys.executable} -m agentcommons.http_adapter {{prompt_file}}"
+        command = shlex.join([sys.executable, "-m", "agentcommons.http_adapter", "{prompt_file}"])
         if mode == "completed":
             assert execute_agent(command, "Fixture task", tmp_path, 10, env) == {"summary": "Fixture completion"}
         elif mode == "running":

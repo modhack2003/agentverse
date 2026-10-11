@@ -391,7 +391,7 @@ class NodeService:
 
 
 def load_config(path):
-    return NodeConfig.model_validate(json.loads(Path(path).expanduser().read_text()))
+    return NodeConfig.model_validate(json.loads(Path(path).expanduser().read_text(encoding="utf-8")))
 
 
 def doctor(config=None):

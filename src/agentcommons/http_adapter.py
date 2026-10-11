@@ -15,7 +15,7 @@ TERMINAL = {"completed", "failed", "cancelled"}
 
 def read_state(path):
     try:
-        result = json.loads(Path(path).read_text()) if path else {}
+        result = json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
         return result if isinstance(result, dict) else {}
     except (ValueError, OSError):
         return {}
@@ -91,7 +91,7 @@ def run(prompt_file):
     failure = None
     try:
         with client(config) as http:
-            payload = {"protocol_version": 1, "request_id": request_id, "prompt": Path(prompt_file).read_text(),
+            payload = {"protocol_version": 1, "request_id": request_id, "prompt": Path(prompt_file).read_text(encoding="utf-8"),
                        "model": os.getenv("AGENTVERSE_MODEL", ""),
                        "settings": json.loads(os.getenv("AGENTVERSE_SETTINGS", "{}")), "workspace": str(Path.cwd())}
             response = http.post("jobs", json=payload, headers={"Idempotency-Key": request_id})

@@ -45,7 +45,7 @@ def managed_node(executable, home, cwd, base, request):
                 snapshot = request(f'/api/projects/{project}/snapshot')
                 if snapshot['nodes'][0]['online']:
                     break
-                assert process.poll() is None, (cwd / 'node.log').read_text()
+                assert process.poll() is None, (cwd / 'node.log').read_text(encoding="utf-8")
                 assert time.monotonic() < deadline
                 time.sleep(.1)
             path = f'/api/projects/{project}/agents/{peer}'
@@ -54,10 +54,10 @@ def managed_node(executable, home, cwd, base, request):
             request(path + '/launch', {})
             deadline = time.monotonic() + 30
             while not trace.exists():
-                assert process.poll() is None, (cwd / 'node.log').read_text()
-                assert time.monotonic() < deadline, '\n'.join(path.read_text() for path in (cwd / 'node-logs').glob('*.log'))
+                assert process.poll() is None, (cwd / 'node.log').read_text(encoding="utf-8")
+                assert time.monotonic() < deadline, '\n'.join(path.read_text(encoding="utf-8") for path in (cwd / 'node-logs').glob('*.log'))
                 time.sleep(.1)
-            evidence = json.loads(trace.read_text())
+            evidence = json.loads(trace.read_text(encoding="utf-8"))
             assert evidence['argv_model'] == evidence['env_model'] == 'fixture/model'
             assert evidence['admin_token'] is None and evidence['node_token'] is None
             request(path + '/stop', {})
@@ -79,6 +79,7 @@ def verify(executable, package_archive=None):
     env = {key: value for key, value in os.environ.items() if not key.startswith(('AGENTVERSE_', 'AGENTCOMMONS_'))
            and key not in {'PYTHONPATH', 'VIRTUAL_ENV', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'}}
     env['PYTHON_DOTENV_DISABLED'] = '1'
+    env['PYTHONIOENCODING'] = 'utf-8'
     with tempfile.TemporaryDirectory(prefix='agentverse-native-') as temporary:
         cwd = Path(temporary)
         home = cwd / 'workspace with spaces ü'
@@ -86,14 +87,22 @@ def verify(executable, package_archive=None):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         def run(*args):
             command = [str(executable), *map(str, args)]
-            result = subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True, timeout=60)
+            result = subprocess.run(command, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, timeout=60)
             assert result.returncode == 0, result.stdout + result.stderr
             return result.stdout
         run('--help')
         with socket.socket() as occupied:
-            occupied.bind(('127.0.0.1', 8000))
+            if os.name != 'nt':
+                occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                occupied.bind(('127.0.0.1', 8000))
+                occupied.listen()
+            except OSError:
+                # A prior browser fixture may still own 8000; it also exercises the occupied-port path.
+                with socket.create_connection(('127.0.0.1', 8000), timeout=2):
+                    pass
             run('start', '--home', home, '--no-browser')
-        config = json.loads((home / 'config.json').read_text())
+        config = json.loads((home / 'config.json').read_text(encoding="utf-8"))
         assert config['port'] != 8000
         base = f"http://127.0.0.1:{config['port']}"
         def request(path, body=None, token=None, method=None):
@@ -121,7 +130,7 @@ def verify(executable, package_archive=None):
                 'protocolVersion': '2025-03-26', 'capabilities': {}, 'clientInfo': {'name': 'portable-test', 'version': '1'}}}, peer['token'])
             assert mcp['result']['serverInfo']['name'] == 'AgentVerse'
             run('doctor', '--home', home, '--export', cwd / 'diagnostics.json')
-            assert config['admin_token'] not in (cwd / 'diagnostics.json').read_text()
+            assert config['admin_token'] not in (cwd / 'diagnostics.json').read_text(encoding="utf-8")
             before = json.loads(run('status', '--home', home))
             assert json.loads(run('start', '--home', home, '--no-browser'))['pid'] == before['pid']
             extra_project = managed_node(executable, home, cwd, base, request)
@@ -146,12 +155,23 @@ def verify(executable, package_archive=None):
             archive = Path(package_archive).resolve()
             digest = hashlib.sha256(archive.read_bytes()).hexdigest()
             run('update', '--home', home, '--source', archive, '--sha256', digest)
-            metadata = json.loads((home / 'installation.json').read_text())
+            metadata = json.loads((home / 'installation.json').read_text(encoding="utf-8"))
             assert metadata['previous']['kind'] == 'native'
             assert Path(metadata['executable']).exists() and Path(metadata['recovery_backup']).exists()
             run('rollback', '--home', home)
-            assert json.loads((home / 'installation.json').read_text())['executable'] == str(executable)
-        run('uninstall', '--home', home)
+            assert json.loads((home / 'installation.json').read_text(encoding="utf-8"))['executable'] == str(executable)
+        if package_archive:
+            # Exercise uninstall from a selected runtime, including Windows loaded-file cleanup.
+            result = subprocess.run([metadata['executable'], 'uninstall', '--home', str(home)], cwd=cwd,
+                                    env=dict(env, AGENTVERSE_REDIRECTED='1'), text=True, encoding='utf-8',
+                                    capture_output=True, timeout=60)
+            assert result.returncode == 0, result.stdout + result.stderr
+            deadline = time.monotonic() + 45
+            while (home / 'versions').exists():
+                assert time.monotonic() < deadline, 'Deferred runtime removal did not finish.'
+                time.sleep(.1)
+        else:
+            run('uninstall', '--home', home)
         assert (home / 'config.json').exists() and (home / 'data/agentverse.db').exists()
         print('PASS: portable runtime without Python/Node/Git on PATH; occupied port, first-run password/project, dashboard assets, peer/MCP, background lifecycle, restart persistence, diagnostics, backup/restore and data-preserving uninstall.')
 

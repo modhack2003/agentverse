@@ -104,16 +104,33 @@ def show_setup(home, data):
     print("Keep the token private. Setup reruns keep the same token and workspace.", flush=True)
 
 
+def open_browser(url):
+    import sys
+    if not getattr(sys, 'frozen', False):
+        return webbrowser.open(url)
+    from .processes import external_environment, external_loader
+    import subprocess
+    with external_loader():
+        if os.name == 'nt':
+            return webbrowser.open(url)
+        command = ['open', url] if sys.platform == 'darwin' else ['xdg-open', url]
+        try:
+            subprocess.Popen(command, env=external_environment(), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+        except OSError:
+            return False
+
+
 def open_when_ready(port, fragment=""):
-    def open_browser():
+    def launch_browser():
         url = f"http://127.0.0.1:{port}"
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         for _ in range(50):
             try:
                 with opener.open(url + "/api/health", timeout=0.2) as response:
                     if response.status == 200:
-                        webbrowser.open(url + fragment)
+                        open_browser(url + fragment)
                         return
             except (OSError, urllib.error.URLError):
                 time.sleep(0.1)
-    threading.Thread(target=open_browser, daemon=True).start()
+    threading.Thread(target=launch_browser, daemon=True).start()

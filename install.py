@@ -2,7 +2,7 @@
 """Install a stable AgentVerse release, including its dashboard, into an isolated environment."""
 
 import argparse
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, closing
 import hashlib
 import json
 import os
@@ -74,9 +74,9 @@ def snapshot(home):
     with tempfile.TemporaryDirectory() as temporary:
         target = Path(temporary) / 'workspace.db'
         source = home / 'data/agentverse.db'
-        with sqlite3.connect(target) as output:
+        with closing(sqlite3.connect(target)) as output:
             if source.exists():
-                with sqlite3.connect(source) as db:
+                with closing(sqlite3.connect(source)) as db:
                     db.backup(output)
         payloads = {'config.json': json.dumps(config).encode(), 'workspace.db': target.read_bytes()}
         manifest = {'format': 1, 'application_version': VERSION, 'created_at': time.time(),

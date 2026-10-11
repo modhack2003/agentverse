@@ -198,3 +198,16 @@ def test_uninstall_refuses_unconfigured_directory(tmp_path):
     with pytest.raises(FileNotFoundError):
         uninstall(tmp_path, delete_data=True)
     assert (tmp_path / 'versions/unrelated').read_text() == 'keep'
+
+
+def test_unicode_node_config_and_worker_prompt(tmp_path):
+    import shlex
+    from agentcommons.node import load_config
+    from agentcommons.worker import execute_agent
+    path = tmp_path / 'node.json'
+    path.write_text(json.dumps({'repo': 'C:/工作/项目', 'profiles': [{'id': 'peer', 'name': 'Peer', 'kind': 'custom', 'mode': 'connected'}]}, ensure_ascii=False), encoding='utf-8')
+    assert load_config(path).repo == 'C:/工作/项目'
+    script = tmp_path / 'cli.py'
+    script.write_text('import sys,json\nfrom pathlib import Path\nprompt=Path(sys.argv[1]).read_text(encoding="utf-8")\nprint(json.dumps({"summary":prompt},ensure_ascii=False))\n', encoding='utf-8')
+    phrase = 'বাংলা 中文 🚀'
+    assert execute_agent(shlex.join([sys.executable, str(script), '{prompt_file}']), phrase, tmp_path, 10)['summary'] == phrase

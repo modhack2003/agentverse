@@ -3,6 +3,9 @@ on:
   push:
     branches: [main]
   pull_request:
+concurrency:
+  group: agentverse-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -165,7 +168,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.4.0 >/dev/null 2>&1; then
+          latest=$(gh api repos/modhack2003/agentverse/git/ref/heads/main --jq '.object.sha')
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo 'A newer commit is under verification; skipping this superseded release.'
+          elif gh release view v0.4.0 >/dev/null 2>&1; then
             echo 'Stable v0.4.0 already exists; existing release assets are preserved.'
           else
             gh release create v0.4.0 release-assets/* --target "$GITHUB_SHA" --title 'AgentVerse 0.4.0' --notes-file packaging/release-notes.md

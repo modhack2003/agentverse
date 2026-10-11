@@ -1,6 +1,7 @@
 """Local app lifecycle, diagnostics and portable, consistent workspace backups."""
 
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
+import base64
 import hashlib
 import json
 import os
@@ -15,12 +16,11 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-import webbrowser
 import zipfile
 
 from .config import VERSION
-from .processes import module_command
-from .setup import prepare_setup, read_setup
+from .processes import module_command, external_environment, external_loader
+from .setup import prepare_setup, read_setup, open_browser
 
 
 def private_write(path, content):
@@ -128,13 +128,13 @@ def start(home, browser=True, port=None):
             raise ValueError('Stop the app before changing its port.')
         if browser:
             fragment = local_request(home, "setup-link", {})["fragment"] if not config.get("onboarding_complete") else ""
-            webbrowser.open(f"http://127.0.0.1:{config['port']}" + fragment)
+            open_browser(f"http://127.0.0.1:{config['port']}" + fragment)
         return status(home)
     with exclusive(home):
         config = prepare_setup(home, port if port is not None else available_port(config['port']))
     welcome = secrets.token_urlsafe(32) if not config.get('onboarding_complete') else ''
     env = {k: v for k, v in os.environ.items() if not k.startswith(('AGENTVERSE_', 'AGENTCOMMONS_'))}
-    env.update(PYTHON_DOTENV_DISABLED='1', AGENTVERSE_WELCOME_TOKEN=welcome)
+    env.update(PYTHON_DOTENV_DISABLED='1', AGENTVERSE_WELCOME_TOKEN=welcome, PYTHONIOENCODING='utf-8')
     if getattr(sys, 'frozen', False):
         env['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
     flags = {'creationflags': subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt' else {'start_new_session': True}
@@ -153,7 +153,7 @@ def start(home, browser=True, port=None):
                 url = f"http://127.0.0.1:{config['port']}"
                 if welcome:
                     url += '#setup=' + welcome
-                webbrowser.open(url)
+                open_browser(url)
             return state
         if process.poll() is not None:
             raise ValueError(f'Server could not start. Read {log_path} for the error.')
@@ -171,10 +171,10 @@ def backup(home, destination=None):
         db_path = Path(temporary) / 'workspace.db'
         source = home / config['database']
         if source.exists():
-            with sqlite3.connect(source) as connection, sqlite3.connect(db_path) as target:
+            with closing(sqlite3.connect(source)) as connection, closing(sqlite3.connect(db_path)) as target:
                 connection.backup(target)
         else:
-            with sqlite3.connect(db_path) as target:
+            with closing(sqlite3.connect(db_path)) as target:
                 target.execute('PRAGMA user_version=0')
         payloads = {'config.json': json.dumps(config).encode(), 'workspace.db': db_path.read_bytes()}
         manifest = {'format': 1, 'application_version': VERSION, 'created_at': time.time(),
@@ -205,7 +205,7 @@ def restore(home, archive):
         (check / 'config.json').write_bytes(payloads['config.json'])
         read_setup(check)
         (check / 'workspace.db').write_bytes(payloads['workspace.db'])
-        with sqlite3.connect(check / 'workspace.db') as db:
+        with closing(sqlite3.connect(check / 'workspace.db')) as db:
             if db.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
                 raise ValueError('Backup database is damaged.')
     with exclusive(home):
@@ -248,8 +248,26 @@ def diagnostics(home, config=None):
     return report
 
 
+def deferred_windows_cleanup(paths):
+    # A selected runtime cannot delete its loaded EXE/DLLs on Windows. A detached
+    # OS helper waits for this CLI to exit, then removes only installer-owned paths.
+    encoded_paths = base64.b64encode(json.dumps([str(path) for path in paths]).encode()).decode()
+    script = (f"Wait-Process -Id {os.getpid()} -Timeout 60 -ErrorAction SilentlyContinue; "
+              f"$paths = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_paths}')) | ConvertFrom-Json; "
+              "foreach ($path in $paths) { for ($i=0; $i -lt 30; $i++) { "
+              "try { if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop }; break } "
+              "catch { Start-Sleep -Seconds 1 } } }")
+    powershell = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+    with external_loader():
+        subprocess.Popen([str(powershell), '-NoProfile', '-NonInteractive', '-EncodedCommand',
+                          base64.b64encode(script.encode('utf-16le')).decode()],
+                         env=external_environment(), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
+
+
 def uninstall(home, delete_data=False):
     read_setup(home)  # Never remove similarly named folders from an unconfigured directory.
+    pending = []
     with exclusive(home):
         # Only paths created by the installer; never delete an arbitrary --home recursively.
         for name in ('venv', 'versions'):
@@ -257,7 +275,15 @@ def uninstall(home, delete_data=False):
             if path.is_symlink():
                 path.unlink()
             elif path.exists():
-                shutil.rmtree(path)
+                try:
+                    shutil.rmtree(path)
+                except PermissionError:
+                    if os.name != 'nt':
+                        raise
+                    pending.append(path)
+        if pending:
+            deferred_windows_cleanup(pending)
+        (home / 'installation.json').unlink(missing_ok=True)
         if delete_data:
             for name in ('data', 'backups'):
                 path = home / name
@@ -267,4 +293,4 @@ def uninstall(home, delete_data=False):
                     shutil.rmtree(path)
             for name in ('config.json', 'server.log', 'installation.json'):
                 (home / name).unlink(missing_ok=True)
-    return {'uninstalled': True, 'data_kept': not delete_data}
+    return {'uninstalled': True, 'data_kept': not delete_data, 'cleanup_pending': bool(pending)}

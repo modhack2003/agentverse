@@ -37,7 +37,8 @@ def shortcut(home, autostart=False, remove=False):
         folder.mkdir(parents=True, exist_ok=True)
         # Pass values as JSON on stdin, never interpolate credentials or user paths into PowerShell code.
         script = "$v = [Console]::In.ReadToEnd() | ConvertFrom-Json; $s = (New-Object -ComObject WScript.Shell).CreateShortcut($v.path); $s.TargetPath = $v.target; $s.Arguments = $v.arguments; $s.WorkingDirectory = $v.cwd; $s.Save()"
-        external_run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
+        powershell = Path(os.environ.get('SystemRoot', r'C:\Windows')) / 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        external_run([str(powershell), '-NoProfile', '-NonInteractive', '-Command', script],
                        input=json.dumps({'path': str(path), 'target': argv[0],
                                          'arguments': subprocess.list2cmdline(argv[1:]), 'cwd': str(home)}),
                        text=True, check=True, capture_output=True)

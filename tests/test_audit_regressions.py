@@ -112,8 +112,9 @@ def kill_leftover(pid_file):
     if pid_file.exists():
         try:
             os.kill(int(pid_file.read_text()), signal.SIGTERM if os.name == "nt" else signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        except OSError as exc:
+            if not isinstance(exc, ProcessLookupError) and not (os.name == "nt" and exc.winerror == 87):
+                raise
 
 
 @pytest.mark.parametrize("ending", ["success", "timeout", "stop"])

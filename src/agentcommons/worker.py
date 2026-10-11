@@ -44,14 +44,14 @@ def result_json(text):
 def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None, model=""):
     with tempfile.TemporaryDirectory(prefix="agentverse-") as scratch:
         prompt_file = Path(scratch) / "prompt.txt"
-        prompt_file.write_text(prompt)
+        prompt_file.write_text(prompt, encoding="utf-8")
         argv = [arg.replace("{model}", model).replace("{prompt_file}", str(prompt_file)).replace("{prompt}", prompt)
                 for arg in shlex.split(command)]
         if not argv:
             raise RuntimeError("Configure a nonempty worker command.")
         env = agent_environment({**os.environ, **(extra_env or {}), "AGENTCOMMONS_PROMPT_FILE": str(prompt_file),
-                                 "AGENTVERSE_PROMPT_FILE": str(prompt_file), "NO_COLOR": "1"})
-        with (Path(scratch) / "output.log").open("w+") as log:
+                                 "AGENTVERSE_PROMPT_FILE": str(prompt_file), "NO_COLOR": "1", "PYTHONIOENCODING": "utf-8"})
+        with (Path(scratch) / "output.log").open("w+", encoding="utf-8", errors="replace") as log:
             process = start_process(argv, cwd=directory, env=env, stdout=log, stderr=subprocess.STDOUT)
             try:
                 try:
@@ -103,7 +103,7 @@ class Worker:
         self.git("rev-parse", "--git-dir")
 
     def git(self, *args, cwd=None):
-        result = external_run(["git", *args], cwd=cwd or self.repo, capture_output=True, text=True,
+        result = external_run(["git", *args], cwd=cwd or self.repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
                                 check=False, timeout=120)
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip())
