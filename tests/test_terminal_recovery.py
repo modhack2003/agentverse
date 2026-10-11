@@ -6,6 +6,18 @@ import pytest
 from conftest import TOKEN, agent, project
 
 
+async def wait_for_updates(app):
+    from textual.worker import WorkerCancelled
+    # Context changes intentionally cancel obsolete refreshes. Wait for their
+    # replacements, while preserving worker failures and all history assertions.
+    async with asyncio.timeout(30):
+        while True:
+            try:
+                return await app.workers.wait_for_complete()
+            except WorkerCancelled:
+                await asyncio.sleep(.01)
+
+
 @pytest.mark.parametrize("initial_count", [0, 5, 105])
 @pytest.mark.parametrize("target", ["general", "engineering", "private"])
 def test_terminal_refresh_bridges_a_multi_page_gap(live_server, target, initial_count):
@@ -35,14 +47,14 @@ def test_terminal_refresh_bridges_a_multi_page_gap(live_server, target, initial_
             for i in range(205):
                 post(f"Inside gap {i}")
             app.refresh_remote()
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             await pilot.pause(0.2)
             contents = [r["content"] for r in app.chat_messages]
             for _ in range(4):
                 if app.query_one("#older-chat", Button).disabled:
                     break
                 await app.load_older_chat()
-                await app.workers.wait_for_complete()
+                await wait_for_updates(app)
                 await pilot.pause(0.1)
             assert app.query_one("#older-chat", Button).disabled
             contents = [r["content"] for r in app.chat_messages]
@@ -78,14 +90,14 @@ def test_terminal_help_refresh_retains_access_to_requests_inside_gap(live_server
             for i in range(initial_count, initial_count + 205):
                 post(i)
             app.refresh_remote()
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             await pilot.pause(0.2)
             questions = [r["question"] for r in app.help_requests]
             for _ in range(4):
                 if app.query_one("#older-help", Button).disabled:
                     break
                 await app.load_older_help()
-                await app.workers.wait_for_complete()
+                await wait_for_updates(app)
                 await pilot.pause(0.1)
             assert app.query_one("#older-help", Button).disabled
             questions = [r["question"] for r in app.help_requests]
@@ -113,9 +125,9 @@ def test_terminal_refresh_updates_answers_on_already_loaded_older_help(live_serv
         app = CommonsTUI(url, TOKEN)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(1)
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             await app.load_older_help()
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             assert len(app.help_requests) == 105
             endpoint = f"/api/projects/{p}/help/{oldest_id}"
             assert c.post(endpoint + "/claim", headers=peer_headers).status_code == 200
@@ -126,7 +138,7 @@ def test_terminal_refresh_updates_answers_on_already_loaded_older_help(live_serv
                 == 200
             )
             app.refresh_remote()
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             row = next(row for row in app.help_requests if row["id"] == oldest_id)
             assert row["state"] == "answered"
             assert row["answer"] == "Updated older answer"
@@ -304,7 +316,7 @@ def test_terminal_creation_is_not_resubmitted_after_successful_post_and_failed_r
             assert posts == 1
             assert not reopened
             assert app.query_one("#project-select", Select).value == app.project_id
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             await pilot.pause(0.2)
             assert not app.project_refresh_pending
             if kind == "project":
@@ -378,7 +390,7 @@ def test_terminal_polling_allows_a_slow_history_refresh_to_finish(live_server):
                 assert not worker.is_cancelled
             finally:
                 release.set()
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             assert len(app.chat_messages) == 210
             assert len({row["id"] for row in app.chat_messages}) == 210
 
@@ -427,7 +439,7 @@ def test_terminal_discards_late_older_pages_after_switching_context(live_server,
             await pilot.pause(1)
             app.query_one("#project-select", Select).value = p
             await pilot.pause(0.3)
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             assert app.project_id == p
             assert len(app.help_requests if change.startswith("help") else app.chat_messages) == 100
             started, release = asyncio.Event(), asyncio.Event()
@@ -454,7 +466,7 @@ def test_terminal_discards_late_older_pages_after_switching_context(live_server,
                 else:
                     app.query_one("#project-select", Select).value = new_project
                 await pilot.pause(0.3)
-                await app.workers.wait_for_complete()
+                await wait_for_updates(app)
                 if change.endswith("_roundtrip"):
                     for i in range(205):
                         endpoint = f"/api/projects/{p}/{'help' if is_help else 'messages'}"
@@ -467,11 +479,11 @@ def test_terminal_discards_late_older_pages_after_switching_context(live_server,
                     else:
                         app.query_one("#project-select", Select).value = p
                     await pilot.pause(0.3)
-                    await app.workers.wait_for_complete()
+                    await wait_for_updates(app)
             finally:
                 release.set()
             await pending
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             if change.endswith("_roundtrip"):
                 from textual.widgets import Button
 
@@ -482,7 +494,7 @@ def test_terminal_discards_late_older_pages_after_switching_context(live_server,
                     if button.disabled:
                         break
                     await (app.load_older_help() if is_help else app.load_older_chat())
-                    await app.workers.wait_for_complete()
+                    await wait_for_updates(app)
                     await pilot.pause(0.1)
                 rows = app.help_requests if is_help else app.chat_messages
                 assert len(rows) == 310
@@ -515,7 +527,7 @@ def test_terminal_history_buttons_work_at_actual_terminal_sizes(live_server, siz
             assert len(app.help_requests) == 100
             assert not app.query_one("#older-help", Button).disabled
             assert await pilot.click("#older-help")
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             await pilot.pause(0.3)
             assert len(app.help_requests) == 105
             assert app.query_one("#older-help", Button).disabled
@@ -523,7 +535,7 @@ def test_terminal_history_buttons_work_at_actual_terminal_sizes(live_server, siz
             await pilot.pause(0.2)
             assert len(app.chat_messages) == 100
             assert await pilot.click("#older-chat")
-            await app.workers.wait_for_complete()
+            await wait_for_updates(app)
             await pilot.pause(0.3)
             assert len(app.chat_messages) == 105
             assert app.query_one("#older-chat", Button).disabled
