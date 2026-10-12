@@ -7,6 +7,7 @@ import Modal from './Dialog'
 import ConnectionDetails from './ConnectionDetails'
 import ConnectionWizard from './ConnectionWizard'
 import CoordinationHistory from './CoordinationHistory'
+import { ConversationReadiness } from './ConversationStatus'
 import type { Agent, ConnectionMode, RemoteNode, RuntimeConfig, SettingValue, Snapshot } from './types'
 
 const activeStates = ['queued', 'starting', 'running', 'stopping', 'unconfirmed']
@@ -122,6 +123,7 @@ export default function RemoteAgents({ snapshot, token, reload, avatar, invite, 
       return <section className="panel agent-card managed-agent" key={agent.id} aria-label={`${agent.name} agent`}>
         <div className="agent-card-top">{avatar(agent)}<span className={`badge ${color}`}><span className={`status-dot ${color === 'green' ? 'green' : color === 'amber' ? 'amber' : 'muted'}`} />{state}</span></div>
         <h2>{agent.name}</h2><p>{agent.kind} · {connected ? 'Connected session' : modeName[runtime!.mode]}</p>{agent.description && <p className="agent-description">{agent.description}</p>}
+        <ConversationReadiness agent={agent} />
         <div className="memory-tags">{agent.capabilities.map(cap => <span key={cap}>{cap}</span>)}</div>
         {agent.limitations.length > 0 && <p className="agent-limitations"><TriangleAlert size={12} />{agent.limitations.join(' · ')}</p>}
          <div className="runtime-summary">{runtime ? <><span><Server size={13} />{node?.name || 'Remote node'}</span><span title={runtime.model}><Cpu size={13} />{modelName || runtime.model || 'Tool default model'}</span>{runtime.pid && active && <span><Terminal size={13} />Worker PID {runtime.pid}</span>}</> : <span><Globe size={14} />Connect through HTTP, or configure a managed node runtime.</span>}{agent.session_info.tool_version && <span>Session version {agent.session_info.tool_version}</span>}</div>

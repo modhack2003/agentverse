@@ -6,6 +6,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .models import MemoryWrite, MessageCreate, PlanFinish, ReviewCreate, TaskCreate, WorkSubmit
 from .models import AgentAnnounce, HelpCreate, HelpAnswer, IssueCreate
+from .models import ChatSession, ChatFinish, ChatFailure, ChatPoll
 from .config import PRODUCT, setting
 
 
@@ -79,11 +80,42 @@ def create_mcp(store):
         return store.snapshot(who(ctx), project_id)
 
     @mcp.tool()
-    def heartbeat(ctx: Context, status: str = "idle") -> dict:
+    def heartbeat(ctx: Context, status: str = "idle", chat_session_id: str | None = None) -> dict:
         """Call every 30 seconds while connected. Status: idle, working or offline."""
         if status not in {"idle", "working", "offline"}:
             raise ValueError("Status must be idle, working or offline")
-        return store.heartbeat(who(ctx), status)
+        principal = who(ctx)
+        if chat_session_id:
+            return store.conversations.pulse(principal, ChatSession(session_id=chat_session_id).session_id, status=status)
+        return store.heartbeat(principal, status)
+
+    @mcp.tool()
+    def stop_chat_listener(session_id: str, ctx: Context) -> dict:
+        """Stop this conversation listener without allowing delayed heartbeats to revive it."""
+        return store.conversations.pulse(who(ctx), ChatSession(session_id=session_id).session_id, stop=True)
+
+    @mcp.tool()
+    def register_chat_listener(session_id: str, ctx: Context) -> dict:
+        """Register a persistent conversation loop using a unique 32-character lowercase hex session ID."""
+        return store.conversations.register(who(ctx), ChatSession(session_id=session_id).session_id)
+
+    @mcp.tool()
+    def claim_chat_turn(session_id: str, ctx: Context, request_id: str | None = None) -> dict | None:
+        """Claim your oldest queued message. Answer using its isolated history; do not perform coding work here."""
+        data = ChatPoll(session_id=session_id, request_id=request_id)
+        return store.conversations.claim(who(ctx), data.session_id, data.request_id)
+
+    @mcp.tool()
+    def finish_chat_turn(message_id: str, session_id: str, claim_token: str, result: dict, ctx: Context) -> dict:
+        """Publish a reply once. Only the coordinating owner turn may propose task_request; it creates a planning task."""
+        return store.conversations.finish(who(ctx), message_id, ChatFinish(session_id=session_id, claim_token=claim_token, result=result))
+
+    @mcp.tool()
+    def fail_chat_turn(message_id: str, session_id: str, claim_token: str, error: str, ctx: Context,
+                       cancellation_confirmed: bool = True) -> dict:
+        """Report a failed invocation. Set cancellation_confirmed false if external work may still be active."""
+        return store.conversations.failure(who(ctx), message_id, ChatFailure(session_id=session_id, claim_token=claim_token,
+                                                                           error=error, cancellation_confirmed=cancellation_confirmed))
 
     @mcp.tool()
     def team_inbox(project_id: str, ctx: Context, after_event: int = 0) -> dict:
@@ -95,10 +127,12 @@ def create_mcp(store):
 
     @mcp.tool()
     def send_message(project_id: str, content: str, ctx: Context, channel: str = "general",
-                     recipient_id: str | None = None, task_id: str | None = None) -> dict:
+                     recipient_id: str | None = None, task_id: str | None = None, reply_to_id: str | None = None,
+                     intent: str = "auto", client_request_id: str | None = None) -> dict:
         """Talk naturally with teammates. Set recipient_id for a private DM, or leave it empty for team chat."""
         return store.message(who(ctx), project_id, MessageCreate(
-            content=content, channel=channel, recipient_id=recipient_id, task_id=task_id))
+            content=content, channel=channel, recipient_id=recipient_id, task_id=task_id, reply_to_id=reply_to_id,
+            intent=intent, client_request_id=client_request_id))
 
     @mcp.tool()
     def create_task(project_id: str, title: str, ctx: Context, description: str = "",

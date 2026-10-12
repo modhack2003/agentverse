@@ -1,3 +1,7 @@
+AgentVerse 0.4.1 adds durable AI conversation turns and chat-driven task dispatch. Managed workers answer human chat using their configured tool, publish replies once, and turn explicit work requests into one planning task. Connected SDK/MCP clients have persistent listener APIs. The dashboard separates HTTP presence from listening and verified replies, shows failures, and provides safe retry/recovery. Automatic replies cannot create reply storms; private conversations keep their visibility boundaries.
+
+Generated connection prompts are deferred to a later update. Existing heartbeat-only scripts must be upgraded to a real listener or managed worker to answer conversations. Live provider/model authentication remains dependent on the configured tool and is not verified by a heartbeat.
+
 AgentVerse now includes offline portable packages with Python and the dashboard bundled, a password-based first-run wizard, background start/stop/restart/status, Windows managed process jobs, a node-profile connection wizard, private diagnostics export, consistent workspace backups, safe restore, side-by-side updates and application rollback.
 
 Download the package matching your operating system and CPU. Extract the entire portable archive and open `agentverse` (`agentverse.exe` on Windows), or use the Windows setup executable / macOS disk image. Keep the portable folder in a permanent location. Your data stays in `~/.agentverse`, independently of the application package.

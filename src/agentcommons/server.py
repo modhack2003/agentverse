@@ -20,6 +20,7 @@ from .models import (
 from .store import Store
 from .config import PRODUCT, VERSION, PROTOCOL_VERSION, setting
 from .models import AgentEdit, AgentAnnounce, HelpCreate, HelpAnswer, IssueCreate
+from .models import ChatSession, ChatFinish, ChatFailure, ChatRetry, ChatPoll, ChatHeartbeat
 
 
 class SPAFiles(StaticFiles):
@@ -44,8 +45,17 @@ def create_app(db_path=None, admin_token=None, web_dir=None, local_home=None):
 
     @asynccontextmanager
     async def lifespan(app):
+        async def maintain_conversations():
+            while True:
+                await asyncio.sleep(5)
+                await asyncio.to_thread(store.conversations.sweep)
         async with mcp.session_manager.run():
-            yield
+            maintenance = asyncio.create_task(maintain_conversations())
+            try:
+                yield
+            finally:
+                maintenance.cancel()
+                await asyncio.gather(maintenance, return_exceptions=True)
         store.close()
 
     app = FastAPI(title=PRODUCT, version=VERSION, lifespan=lifespan)
@@ -87,7 +97,7 @@ def create_app(db_path=None, admin_token=None, web_dir=None, local_home=None):
         return {"product": PRODUCT, "version": VERSION, "protocol_version": PROTOCOL_VERSION,
                 "connection_modes": ["managed_cli", "managed_api", "connected"],
                 "peer_transports": ["mcp", "http"], "mcp_path": "/mcp/",
-                 "features": ["peer-discovery", "capabilities", "versioned-profiles", "settings-schema", "health", "help-requests"]}
+                 "features": ["peer-discovery", "capabilities", "versioned-profiles", "settings-schema", "health", "help-requests", "durable-conversations", "chat-task-dispatch"]}
 
     @app.post("/api/login")
     def login(data: LoginRequest, request: Request):
@@ -240,6 +250,34 @@ def create_app(db_path=None, admin_token=None, web_dir=None, local_home=None):
     @app.post("/api/projects/{project_id}/messages", status_code=201)
     def message(project_id: str, data: MessageCreate, p=Depends(principal)):
         return store.message(p, project_id, data)
+
+    @app.post("/api/agents/chat/register")
+    def register_chat(data: ChatSession, p=Depends(principal)):
+        return store.conversations.register(p, data.session_id)
+
+    @app.post("/api/agents/chat/heartbeat")
+    def heartbeat_chat(data: ChatHeartbeat, p=Depends(principal)):
+        return store.conversations.pulse(p, data.session_id, status=data.status)
+
+    @app.post("/api/agents/chat/stop")
+    def stop_chat(data: ChatSession, p=Depends(principal)):
+        return store.conversations.pulse(p, data.session_id, stop=True)
+
+    @app.post("/api/agents/chat/claim")
+    def claim_chat(data: ChatPoll, p=Depends(principal)):
+        return store.conversations.claim(p, data.session_id, data.request_id)
+
+    @app.post("/api/agents/chat/{message_id}/finish")
+    def finish_chat(message_id: str, data: ChatFinish, p=Depends(principal)):
+        return store.conversations.finish(p, message_id, data)
+
+    @app.post("/api/agents/chat/{message_id}/fail")
+    def fail_chat(message_id: str, data: ChatFailure, p=Depends(principal)):
+        return store.conversations.failure(p, message_id, data)
+
+    @app.post("/api/projects/{project_id}/messages/{message_id}/retry/{agent_id}")
+    def retry_chat(project_id: str, message_id: str, agent_id: str, data: ChatRetry, p=Depends(principal)):
+        return store.conversations.retry(p, project_id, message_id, agent_id, data.confirmed_stopped)
 
     @app.get("/api/projects/{project_id}/tasks")
     def tasks(project_id: str, p=Depends(principal)):

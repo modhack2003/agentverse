@@ -32,9 +32,12 @@ def managed_node(executable, home, cwd, base, request):
                AGENTVERSE_ADMIN_TOKEN='must-not-reach-the-worker', PYTHON_DOTENV_DISABLED='1')
     config = cwd / 'node.json'
     fixture = Path(__file__).parent.resolve() / 'fixtures/controlled_cli.py'
+    chat_fixture = Path(__file__).parent.resolve() / 'fixtures/conversation_cli.py'
     config.write_text(json.dumps({'repo': str(repo), 'log_dir': str(cwd / 'node-logs'), 'profiles': [{
         'id': 'fixture', 'name': 'Fixture', 'kind': 'custom', 'argv': [sys.executable, str(fixture), '{prompt_file}', '{model}'],
-        'models': [{'id': 'fixture/model', 'name': 'Fixture model'}], 'push': False}]}))
+        'models': [{'id': 'fixture/model', 'name': 'Fixture model'}], 'push': False}, {
+        'id': 'chat-fixture', 'name': 'Conversation fixture', 'kind': 'custom',
+        'argv': [sys.executable, str(chat_fixture), '{prompt_file}'], 'push': False}]}))
     from agentcommons.processes import start_process, terminate_process
     with (cwd / 'node.log').open('w') as log:
         process = start_process([str(executable), '--internal-module', 'agentcommons.cli', 'node', '--server', base,
@@ -69,6 +72,21 @@ def managed_node(executable, home, cwd, base, request):
                     break
                 assert time.monotonic() < deadline, snapshot
                 time.sleep(.1)
+            chat_peer = request(f'/api/projects/{project}/agents', {'name': 'Portable chat fixture', 'kind': 'custom'})['agent']['id']
+            chat_path = f'/api/projects/{project}/agents/{chat_peer}'
+            request(chat_path + '/runtime', {'node_id': node['node']['id'], 'profile_id': 'chat-fixture'}, method='PUT')
+            greeting = request(f'/api/projects/{project}/messages', {'content': '@Portable chat fixture hi', 'intent': 'chat'})
+            request(chat_path + '/launch', {})
+            deadline = time.monotonic() + 30
+            while True:
+                snapshot = request(f'/api/projects/{project}/snapshot')
+                if any(m['reply_to_id'] == greeting['id'] and m['content'] == 'Hello! I can talk with you.' for m in snapshot['messages']):
+                    assert next(a for a in snapshot['agents'] if a['id'] == chat_peer)['conversation']['state'] == 'verified'
+                    break
+                assert time.monotonic() < deadline, snapshot
+                time.sleep(.1)
+            request(chat_path + '/stop', {})
+            print('PASS: frozen node/worker invokes the configured conversation tool and publishes a verified human-visible reply.')
         finally:
             terminate_process(process, grace=10)
     return project
@@ -114,7 +132,7 @@ def verify(executable, package_archive=None):
             with opener.open(req, timeout=10) as response:
                 return json.loads(response.read())
         try:
-            assert request('/api/health')['version'] == '0.4.0'
+            assert request('/api/health')['version'] == '0.4.1'
             with opener.open(base) as response:
                 html = response.read().decode()
             assert 'AgentVerse' in html

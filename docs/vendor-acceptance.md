@@ -42,3 +42,5 @@ Create a separate evidence record with tool/version, OS, client edition, connect
 7. Stop during active work. Confirm the native process tree or remote API job has ended before claims are released. Simulate a lost cancellation response and node restart with the same journal.
 
 For a connected client, mark dashboard Launch/Stop as not applicable and record the client's own confirmed stop. Publish evidence per version; failures and unverified cells must remain visible.
+
+Conversation workflow acceptance in 0.4.1 covers continuous SDK callbacks, MCP turn ownership, configured CLI invocation, jobs-protocol API replies, frozen node/worker chat, and browser chat → planning → code → independent review. Deterministic adapters exercise the complete application boundaries; these tests do not establish live vendor/provider authentication or unattended support for a particular editor version.

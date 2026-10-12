@@ -14,6 +14,7 @@ import RemoteAgents from './RemoteAgents'
 import Onboarding, { hasSetupLink } from './Onboarding'
 import WorkspaceTools from './WorkspaceTools'
 import ConnectionDetails from './ConnectionDetails'
+import { ConversationDelivery } from './ConversationStatus'
 import { ThemePicker } from './Themes'
 import { readStorage, writeStorage, removeStorage } from './storage'
 import type { Agent, Memory, Message, Project, Snapshot, Task } from './types'
@@ -102,6 +103,9 @@ function Chat({ snapshot, token, reload, full = false, initialRecipient = '' }: 
   const [history, setHistory] = useState<{ key: string; messages: Message[]; hasOlder: boolean }>({ key: '', messages: [], hasOlder: false })
   const [historyBusy, setHistoryBusy] = useState(false), [loading, setLoading] = useState(false)
   const [historyRefresh, setHistoryRefresh] = useState(0)
+  const [intent, setIntent] = useState('auto')
+  const newSendId = () => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
+  const sendId = useRef(newSendId())
   const historyRef = useRef(history); historyRef.current = history
   const end = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -158,25 +162,27 @@ function Chat({ snapshot, token, reload, full = false, initialRecipient = '' }: 
     e.preventDefault(); if (!content.trim() || busy) return; setBusy(true); setError('')
     try {
       if (dm && target !== 'human' && !snapshot.agents.some(agent => agent.id === target)) { setTarget('#general'); throw new Error('That teammate is not part of the current project.') }
-      await api<Message>(token, `/projects/${snapshot.project.id}/messages`, 'POST', { content: content.trim(), channel: dm ? 'general' : target.slice(1), recipient_id: dm ? target : null })
+      const requestId = sendId.current
+      await api<Message>(token, `/projects/${snapshot.project.id}/messages`, 'POST', { content: content.trim(), channel: dm ? 'general' : target.slice(1), recipient_id: dm ? target : null, intent, client_request_id: requestId })
       if (activeConversation.current !== conversationKey) return
       // Fetch through the server window so a sent message cannot conceal a gap.
-      setContent(''); setHistoryRefresh(current => current + 1)
+      if (sendId.current === requestId) { setContent(''); sendId.current = newSendId() }
+      setHistoryRefresh(current => current + 1)
       await reload().catch(() => setError('Message sent; workspace refresh failed. Live updates will retry.'))
     }
     catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return <section className={`panel chat-panel ${full ? 'full-chat' : ''}`}>
     <div className="panel-heading"><div className="heading-icon"><MessageSquare size={17} /><h2>Team conversation</h2></div><span className="live-label"><span className="status-dot green" /> Shared context</span></div>
-    <div className="channel-picker"><Hash size={16} /><select aria-label="Conversation" value={target} onChange={e => setTarget(e.target.value)}><optgroup label="Team channels"><option value="#general">general</option><option value="#engineering">engineering</option><option value="#reviews">reviews</option></optgroup><optgroup label="Direct messages">{snapshot.agents.filter(a => a.id !== snapshot.identity.actor_id).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}{!snapshot.identity.admin && <option value="human">Workspace owner</option>}</optgroup></select>{dm && <LockKeyhole size={13} />}</div>
+    <div className="channel-picker"><Hash size={16} /><select aria-label="Conversation" value={target} onChange={e => { setTarget(e.target.value); sendId.current = newSendId() }}><optgroup label="Team channels"><option value="#general">general</option><option value="#engineering">engineering</option><option value="#reviews">reviews</option></optgroup><optgroup label="Direct messages">{snapshot.agents.filter(a => a.id !== snapshot.identity.actor_id).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}{!snapshot.identity.admin && <option value="human">Workspace owner</option>}</optgroup></select>{dm && <LockKeyhole size={13} />}</div>
     <div className="chat-messages">{messages.length === 0 && !loading && !error && <Empty icon={<MessageSquare size={25} />} title={dm ? 'A conversation just for you two' : 'Start the conversation'}>Ideas, questions, and handoffs belong here.</Empty>}
       {loading && messages.length === 0 && <p className="subtle">Loading conversation…</p>}
       {history.key === conversationKey && history.hasOlder && <button className="text-button" disabled={historyBusy} onClick={() => void loadHistory()}>{historyBusy ? 'Loading history…' : 'Load older messages'}</button>}
       {messages.map(message => {
         const agent = snapshot.agents.find(a => a.id === message.sender_id)
-        return <div className="message" key={message.id}><Avatar agent={agent} human={message.sender_id === 'human'} /><div className="message-body"><div className="message-head"><strong>{message.sender_id === 'human' ? 'You · workspace owner' : agent?.name || 'Teammate'}</strong><time>{new Date(message.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.content}</p>{message.task_id && <span className="message-task"><ListTodo size={11} /> Linked to {snapshot.tasks.find(t => t.id === message.task_id)?.title || 'a task'}</span>}</div></div>
+        return <div className="message" key={message.id}><Avatar agent={agent} human={message.sender_id === 'human'} /><div className="message-body"><div className="message-head"><strong>{message.sender_id === 'human' ? 'You · workspace owner' : agent?.name || 'Teammate'}</strong><time>{new Date(message.created_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.content}</p><ConversationDelivery message={message} snapshot={snapshot} token={token} reload={reload} />{(message.task_id || message.dispatch_task_id) && <span className="message-task"><ListTodo size={11} /> Linked to {snapshot.tasks.find(t => t.id === (message.dispatch_task_id || message.task_id))?.title || 'a task'}</span>}</div></div>
       })}<div ref={end} /></div>
-    <form className="chat-compose" onSubmit={send}><textarea aria-label="Message" placeholder={dm ? 'Send a private message…' : 'Talk to your team…'} value={content} onChange={e => setContent(e.target.value)} rows={2} maxLength={20000} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(e) } }} /><div><span>Enter to send · Shift + Enter for a new line</span><button className="send-button" aria-label="Send message" disabled={busy || !content.trim()}><Send size={15} /></button></div>{error && <p className="form-error" role="alert">{error}</p>}</form>
+    <form className="chat-compose" onSubmit={send}>{snapshot.identity.admin && <label className="chat-intent">Message action<select aria-label="Message action" value={intent} onChange={e => { setIntent(e.target.value); sendId.current = newSendId() }}><option value="auto">Chat or work request</option><option value="chat">Chat only</option><option value="task">Give a task</option></select></label>}<textarea aria-label="Message" placeholder={dm ? 'Send a private message…' : 'Talk to your team…'} value={content} onChange={e => { setContent(e.target.value); sendId.current = newSendId() }} rows={2} maxLength={20000} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send(e) } }} /><div><span>Enter to send · Shift + Enter for a new line</span><button className="send-button" aria-label="Send message" disabled={busy || !content.trim()}><Send size={15} /></button></div>{error && <p className="form-error" role="alert">{error}</p>}</form>
   </section>
 }
 

@@ -19,7 +19,7 @@ Build on the target OS and architecture. Linux needs dpkg-deb and rpmbuild. Wind
 
 Linux produces portable tar.gz, deb and rpm. Windows produces a portable ZIP and an Inno Setup installer without requiring administrator privileges. macOS produces portable tar.gz and a disk image containing AgentVerse.app.
 
-The release job waits for all test/install/native jobs, verifies archive checksums, and publishes a stable v0.4.0 release with the updater manifest. It preserves an already published stable release rather than replacing its assets with unrelated later commits. Bump the version, installer tag and release target together for a subsequent release.
+The release job waits for all test/install/native jobs, verifies archive checksums, and publishes a stable v0.4.1 release with the updater manifest. It preserves an already published stable release rather than replacing its assets with unrelated later commits. Bump the version, installer tag and release target together for a subsequent release.
 
 ## Signing
 

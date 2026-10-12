@@ -296,6 +296,8 @@ class RuntimeRegistry:
         return row["agent_id"], row["project_id"], row["run_id"]
 
     def can_claim(self, principal):
+        if hasattr(self.store, 'conversations') and self.store.one("SELECT 1 FROM chat_turns WHERE agent_id=? AND (state='unconfirmed' OR (state='working' AND lease_until<?))", (principal.agent_id, time.time())):
+            fail(409, "An earlier conversation invocation has unconfirmed termination. Recover it before starting more work.")
         if principal.run_id:
             row = self.runtime(principal.agent_id)
             if not row or row["run_id"] != principal.run_id or row["desired_state"] != "running":
@@ -330,6 +332,8 @@ class RuntimeRegistry:
         self.store.db.execute("UPDATE agent_runtimes SET state='unconfirmed',desired_state='stopped',pid=NULL,error=?,updated_at=? WHERE agent_id=?",
                               (error, time.time(), row["agent_id"]))
         self.store.db.execute("UPDATE agents SET status='offline' WHERE id=?", (row["agent_id"],))
+        if hasattr(self.store, 'conversations'):
+            self.store.db.execute("UPDATE chat_turns SET state='unconfirmed',error='The remote conversation invocation has unconfirmed cancellation.' WHERE agent_id=? AND run_id=? AND state='working'", (row['agent_id'], row['run_id']))
         previous = row.get("recovery", {})
         previous = json.loads(previous) if isinstance(previous, str) else previous
         self.store.db.execute("UPDATE agent_runtimes SET recovery=? WHERE agent_id=?",
@@ -340,6 +344,9 @@ class RuntimeRegistry:
             "UPDATE agent_runtimes SET state=?,desired_state='stopped',pid=NULL,error=?,updated_at=? WHERE agent_id=?",
             (state, error, time.time(), row["agent_id"]))
         self.store.db.execute("UPDATE agents SET status='offline' WHERE id=?", (row["agent_id"],))
+        if hasattr(self.store, 'conversations'):
+            self.store.db.execute("UPDATE chat_turns SET state='failed',error='The previous managed session ended. Retry this reply when the agent is running.' WHERE agent_id=? AND run_id=? AND state IN ('working','unconfirmed')", (row['agent_id'], row['run_id']))
+            self.store.db.execute('UPDATE chat_sessions SET last_seen=0 WHERE agent_id=? AND run_id=?', (row['agent_id'], row['run_id']))
         self.store.db.execute("UPDATE tasks SET status='backlog',assignee_id=NULL,updated_at=? "
                               "WHERE assignee_id=? AND status='in_progress'", (time.time(), row["agent_id"]))
         self.store.db.execute("UPDATE tasks SET reviewer_id=NULL WHERE reviewer_id=? AND status='review'",

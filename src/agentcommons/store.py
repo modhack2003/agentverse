@@ -108,6 +108,8 @@ class Store:
             self.db.execute("ALTER TABLE agents ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0")
         self.runtimes = RuntimeRegistry(self, admin_token)
         self.team = TeamRegistry(self)
+        from .conversations import Conversations
+        self.conversations = Conversations(self)
 
     def close(self):
         with self.lock:
@@ -293,6 +295,7 @@ class Store:
         row["online"] = row["status"] != "offline" and time.time() - row["last_seen"] < 90
         row["revoked"] = bool(row["revoked"])
         row["runtime"] = self.runtimes.runtime(agent_id)
+        row["conversation"] = self.conversations.status(agent_id)
         if row["runtime"] and row["runtime"]["state"] in ACTIVE_STATES:
             row["online"] = row["online"] and self.runtimes.node(project_id, row["runtime"]["node_id"])["online"]
         return row
@@ -305,10 +308,12 @@ class Store:
             runtime = self.runtimes.runtime(agent_id)
             if runtime and runtime["state"] in ACTIVE_STATES or self.one(
                 "SELECT id FROM tasks WHERE (assignee_id=? AND status='in_progress') OR (reviewer_id=? AND status='review')",
-                 (agent_id, agent_id)) or self.one("SELECT id FROM help_requests WHERE assignee_id=? AND state='in_progress'", (agent_id,)):
+                 (agent_id, agent_id)) or self.one("SELECT id FROM help_requests WHERE assignee_id=? AND state='in_progress'", (agent_id,)) or self.one(
+                     "SELECT 1 FROM chat_turns WHERE agent_id=? AND state IN ('working','unconfirmed')", (agent_id,)):
                 fail(409, "Stop or release this teammate's current work before rotating its connection token.")
             self.db.execute("UPDATE agents SET token_hash=?,revoked=0,status='offline' WHERE id=?",
                             (hashlib.sha256(token.encode()).hexdigest(), agent_id))
+            self.db.execute('UPDATE chat_sessions SET last_seen=0 WHERE agent_id=?', (agent_id,))
             self.event(project_id, "agent.token_rotated", principal, agent_id, "Rotated teammate connection token")
         return {"agent": self.agent(principal, project_id, agent_id), "token": token}
 
@@ -318,6 +323,9 @@ class Store:
             self.agent(principal, project_id, agent_id)
             self.db.execute("UPDATE agents SET token_hash=?,status='offline',revoked=1 WHERE id=?",
                              (hashlib.sha256(secrets.token_bytes(32)).hexdigest(), agent_id))
+            self.db.execute("UPDATE chat_turns SET state='cancelled',error='Agent access was revoked.' WHERE agent_id=? AND state='queued'", (agent_id,))
+            self.db.execute("UPDATE chat_turns SET state='unconfirmed',error='Stop the revoked session before recovering this reply.' WHERE agent_id=? AND state='working'", (agent_id,))
+            self.db.execute('UPDATE chat_sessions SET last_seen=0 WHERE agent_id=?', (agent_id,))
             runtime = self.runtimes.runtime(agent_id)
             if runtime and runtime["state"] in ACTIVE_STATES:
                 self.runtimes.stop_locked(principal, runtime)
@@ -336,6 +344,9 @@ class Store:
         with self.transaction():
             self.db.execute("UPDATE agents SET last_seen=?,status=? WHERE id=?",
                             (time.time(), status, principal.agent_id))
+            if status == 'offline':
+                self.db.execute('UPDATE chat_sessions SET last_seen=0 WHERE agent_id=?', (principal.agent_id,))
+                self.db.execute("UPDATE chat_turns SET state='unconfirmed',error='The agent went offline before finishing this reply.' WHERE agent_id=? AND state='working'", (principal.agent_id,))
         runtime = self.runtimes.runtime(principal.agent_id) if principal.run_id else None
         return {"ok": True, "agent_id": principal.agent_id, "project_id": principal.project_id,
                 "stop_requested": bool(runtime and runtime["desired_state"] == "stopped")}
@@ -346,17 +357,30 @@ class Store:
             self.agent(principal, project_id, data.recipient_id)
         if data.task_id:
             self.task(principal, project_id, data.task_id)
+        if data.reply_to_id:
+            where, args = self.visible_sql(principal)
+            if not self.one(f"SELECT id FROM messages WHERE id=? AND project_id=? AND {where}", (data.reply_to_id, project_id, *args)):
+                fail(404, "Reply target not found in this conversation.")
         message_id = uid("msg")
-        self.db.execute("INSERT INTO messages VALUES(?,?,?,?,?,?,?,?)",
+        self.db.execute("INSERT INTO messages(id,project_id,sender_id,recipient_id,channel,content,task_id,created_at,reply_to_id,intent,client_request_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                         (message_id, project_id, principal.actor, data.recipient_id, data.channel,
-                         data.content, data.task_id, time.time()))
+                         data.content, data.task_id, time.time(), data.reply_to_id, data.intent, data.client_request_id))
         self.event(project_id, "message.sent", principal, message_id, data.content[:160], data.recipient_id)
         return message_id
 
     def message(self, principal, project_id, data: MessageCreate):
         with self.transaction():
+            self.project(principal, project_id)
+            if data.client_request_id:
+                existing = self.one('SELECT * FROM messages WHERE project_id=? AND sender_id=? AND client_request_id=?',
+                                    (project_id, principal.actor, data.client_request_id))
+                if existing:
+                    if any(existing[key] != getattr(data, key) for key in ('content', 'channel', 'recipient_id', 'task_id', 'reply_to_id', 'intent')):
+                        fail(409, 'This send identifier was already used for a different message.')
+                    return self.conversations.view(existing)
             message_id = self._message(principal, project_id, data)
-        return self.one("SELECT * FROM messages WHERE id=?", (message_id,))
+            self.conversations.enqueue(principal, message_id)
+        return self.conversations.view(self.one("SELECT * FROM messages WHERE id=?", (message_id,)))
 
     def visible_sql(self, principal):
         # Admin is a participant named human, not an observer of other agents' DMs.
@@ -381,10 +405,10 @@ class Store:
                 self.agent(principal, project_id, recipient_id)
             filters.append("((sender_id=? AND recipient_id=?) OR (sender_id=? AND recipient_id=?))")
             args = (*args, principal.actor, recipient_id, recipient_id, principal.actor)
-        return list(reversed(self.all(
+        return [self.conversations.view(row) for row in reversed(self.all(
             f"SELECT * FROM messages WHERE project_id=? AND {' AND '.join(filters)} ORDER BY created_at DESC,id DESC LIMIT ?",
             (project_id, *args, limit),
-        )))
+        ))]
 
     def dependencies(self, project_id, ids, task_id=None):
         if len(ids) != len(set(ids)):

@@ -10,7 +10,7 @@ export default function ConnectionDetails({ agent, token, copy }: { agent: Agent
   const toolVersion = agent.session_info.tool_version || ''
   const powerShellCapabilities = agent.configured_capabilities.map(powerShellString).join(', ')
   const powerShellLimitations = agent.configured_limitations.map(powerShellString).join(', ')
-  const install = 'python -m pip install "https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.0.zip"'
+  const install = 'python -m pip install "https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.1.zip"'
   const check = `from agentverse import Client
 
 # Two requests, each with a 5-second network timeout; no heartbeat loop.
@@ -60,7 +60,7 @@ while ($true) {
     <h3>Bounded connection check</h3><p>Run once to check HTTP authentication and presence. This does not start your native agent or verify its provider login or ability to do work. Presence expires after this script exits.</p><pre>{check}</pre><button className="button secondary" onClick={() => copy(check)}><Copy size={15} />Copy connection check</button>
     <p><a href="https://github.com/modhack2003/agentverse/blob/main/docs/vendor-acceptance.md" target="_blank" rel="noreferrer">Vendor/version acceptance matrix: live native combinations remain unverified</a></p>
     <h3>Windows PowerShell / REST</h3><pre>{powershell}</pre><button className="button secondary" onClick={() => copy(powershell)}><Copy size={15} />Copy PowerShell setup</button>
-    <div className="connection-step"><span>2</span><div><h3>Introduce the session to its teammates</h3><p>These examples announce the selected agent’s actual capabilities and limitations, then keep its presence alive with a heartbeat every 25 seconds.</p></div></div>
+    <div className="connection-step"><span>2</span><div><h3>Introduce the session to its teammates</h3><p>These presence-only examples announce capabilities and keep the HTTP connection online. They do not read messages or call a model. Managed workers now listen and reply automatically; connected clients need the SDK Client.listen(model_callback) loop or the MCP conversation-turn tools.</p></div></div>
     <div className="connection-step"><span>3</span><div><h3>For Launch and Stop from the web UI</h3><p>HTTP connected sessions are manageable for collaboration, but they do not let the dashboard start or stop the agent. Add a remote node with a verified managed CLI or jobs-protocol API adapter, then choose Configure → runtime → model/settings → Launch.</p></div></div>
     <h3>Standalone worker option</h3><pre>{`export AGENTVERSE_AGENT_TOKEN='${token}'
 agentverse worker --server ${server} \

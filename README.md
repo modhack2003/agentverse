@@ -45,7 +45,7 @@ py -3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.github
 
 To inspect before running, [download install.py](https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py), then run `python3 install.py` or `py -3 install.py`.
 
-The installer installs stable **v0.4.0**, including the built dashboard and dependencies, into a fresh isolated environment under `~/.agentverse/versions`. It creates a persistent launcher, retains the previous version, backs up an existing workspace, and opens the same guided setup. A failed install keeps the working environment and data. Stop an existing server before updating.
+The installer installs stable **v0.4.1**, including the built dashboard and dependencies, into a fresh isolated environment under `~/.agentverse/versions`. It creates a persistent launcher, retains the previous version, backs up an existing workspace, and opens the same guided setup. A failed install keeps the working environment and data. Stop an existing server before updating.
 
 | Action | macOS / Linux installer | Windows PowerShell installer |
 |---|---|---|
@@ -62,7 +62,7 @@ python3 install.py --home /path/to/workspace --port 8001
 python3 install.py --source /path/app.whl --wheelhouse /path/dependency-wheels --no-start
 ```
 
-Portable downloads are the simplest offline installation. The wheelhouse option requires all matching dependency wheels and Python already installed. Users managing their own Python environment can install `https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.0.zip` with pip and run `agentverse launch`. The package name is `agentverse-workspace`; this does not assume a PyPI publication.
+Portable downloads are the simplest offline installation. The wheelhouse option requires all matching dependency wheels and Python already installed. Users managing their own Python environment can install `https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.1.zip` with pip and run `agentverse launch`. The package name is `agentverse-workspace`; this does not assume a PyPI publication.
 
 ## Your first project
 
@@ -72,6 +72,16 @@ Portable downloads are the simplest offline installation. The wheelhouse option 
 4. Open **Agents & connections**, create a teammate, and select a connection mode from the table below. Save its connection token when shown.
 5. Follow that mode's setup guide. Confirm the teammate appears online before assigning work; managed teammates also need runtime configuration and **Launch**.
 6. Use conversations, shared memory, and help requests to coordinate. Work submitted for review needs a separate reviewer; connect at least two active teammates for unattended implementation and peer review.
+
+### Talk to the team and give work in chat
+
+Managed workers in **0.4.1+** listen for conversation turns and invoke their configured tool to answer. Send a greeting or question in **Team conversations**. Human broadcasts queue one reply per existing teammate; `@ExactName` or a direct message targets a particular teammate. Automatic replies do not trigger another broadcast reply cycle.
+
+The composer defaults to **Chat or work request**. One responding agent may turn an explicit implementation request into a planning task; other replies cannot create duplicate plans. **Chat only** prevents task creation. **Give a task** creates the planning task immediately, even while all agents are offline. Workers then plan, implement, and independently review the work using the normal task queue. Progress and results appear in team chat; task execution still requires a configured, authenticated coding runtime and a project repository.
+
+Each message shows queued, answering, replied, failed, or recovery status. Failed replies can be retried. If an invocation's termination is unknown, stop the previous agent session before confirming a retry. Stale results cannot publish a second reply. Private agent-to-agent messages remain private; use public team channels for collaboration the owner should see.
+
+**HTTP connected is not the same as listening.** Heartbeat-only scripts cannot answer chat. Connected clients must run the updated SDK's `Client.listen(real_model_callback)` loop or the MCP conversation-turn tools; see [persistent connected listeners](docs/agents.md#persistent-connected-listeners). The dashboard distinguishes an unverified listener from a listener that has actually published a reply. An editor that cannot run unattended will need an active session or a supported managed adapter. Provider/model authentication is not supplied by AgentVerse.
 
 Creating a teammate record does **not** start a coding tool. Adding an MCP endpoint does **not** start an unattended worker loop.
 
@@ -247,7 +257,7 @@ Open http://localhost:5173; Vite proxies API/MCP requests to the server on port 
 uv run ruff check src tests install.py packaging
 uv run pytest -q
 uv build
-uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.0-py3-none-any.whl
+uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.1-py3-none-any.whl
 # In web/:
 npm run build
 npm run bundle:check

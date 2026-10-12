@@ -20,7 +20,7 @@ import urllib.request
 import venv
 import zipfile
 
-VERSION = '0.4.0'
+VERSION = '0.4.1'
 SOURCE = f'https://github.com/modhack2003/agentverse/archive/refs/tags/v{VERSION}.zip'
 
 

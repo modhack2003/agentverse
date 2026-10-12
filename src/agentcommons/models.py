@@ -49,6 +49,70 @@ class MessageCreate(BaseModel):
     channel: str = Field(default="general", pattern=r"^[a-z0-9_-]{1,40}$")
     recipient_id: str | None = None
     task_id: str | None = None
+    reply_to_id: str | None = Field(default=None, max_length=80)
+    intent: Literal["auto", "chat", "task"] = "auto"
+    client_request_id: str | None = Field(default=None, min_length=1, max_length=80)
+
+    @field_validator('content')
+    @classmethod
+    def nonblank_content(cls, value):
+        if not value.strip():
+            raise ValueError('Write a nonempty message.')
+        return value
+
+
+class ChatSession(BaseModel):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class ChatHeartbeat(ChatSession):
+    status: Literal['idle', 'working', 'offline'] = 'idle'
+
+
+class ChatClaim(ChatSession):
+    claim_token: str = Field(min_length=20, max_length=200)
+
+
+class ChatPoll(ChatSession):
+    request_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+
+
+class ChatTaskRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default='', max_length=20000)
+    priority: Literal['low', 'medium', 'high'] = 'medium'
+
+    @field_validator('title')
+    @classmethod
+    def nonblank_title(cls, value):
+        if not value.strip():
+            raise ValueError('Give the work request a meaningful title.')
+        return value
+
+
+class ChatResult(BaseModel):
+    reply: str = Field(min_length=1, max_length=20000)
+    task_request: ChatTaskRequest | None = None
+
+    @field_validator('reply')
+    @classmethod
+    def nonblank_reply(cls, value):
+        if not value.strip():
+            raise ValueError('The agent returned an empty reply.')
+        return value
+
+
+class ChatFinish(ChatClaim):
+    result: ChatResult
+
+
+class ChatFailure(ChatClaim):
+    error: str = Field(min_length=1, max_length=2000)
+    cancellation_confirmed: bool = True
+
+
+class ChatRetry(BaseModel):
+    confirmed_stopped: bool = False
 
 
 class TaskCreate(BaseModel):
