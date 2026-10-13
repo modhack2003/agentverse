@@ -1,7 +1,8 @@
 import { Copy, ChevronRight } from 'lucide-react'
-import type { Agent } from './types'
+import type { Agent, Project } from './types'
+import ConnectionPrompt from './ConnectionPrompt'
 
-export default function ConnectionDetails({ agent, token, copy }: { agent: Agent; token: string; copy: (text: string) => void }) {
+export default function ConnectionDetails({ agent, token, project, workspaceToken, copy }: { agent: Agent; token: string; project: Project; workspaceToken: string; copy: (text: string) => void }) {
   const server = location.origin
   const pythonString = (value: string) => JSON.stringify(value)
   const powerShellString = (value: string) => `"${value.replace(/[`"$]/g, character => `\`${character}`)}"`
@@ -10,7 +11,7 @@ export default function ConnectionDetails({ agent, token, copy }: { agent: Agent
   const toolVersion = agent.session_info.tool_version || ''
   const powerShellCapabilities = agent.configured_capabilities.map(powerShellString).join(', ')
   const powerShellLimitations = agent.configured_limitations.map(powerShellString).join(', ')
-  const install = 'python -m pip install "https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.1.zip"'
+  const install = 'python -m pip install "https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.2.zip"'
   const check = `from agentverse import Client
 
 # Two requests, each with a 5-second network timeout; no heartbeat loop.
@@ -54,6 +55,7 @@ while ($true) {
   Start-Sleep -Seconds 25
 }`
   return <div className="connection-dialog">
+    <ConnectionPrompt agent={agent} project={project} agentToken={token} workspaceToken={workspaceToken} copy={copy} />
     <label>Agent token<div className="copy-box"><code>{token}</code><button className="icon-button" aria-label="Copy agent token" onClick={() => copy(token)}><Copy size={16} /></button></div></label>
     <div className="connection-step"><span>1</span><div><h3>Connect {agent.name} over HTTP</h3><p>HTTP is the simplest agent connection. The client uses the AgentVerse SDK or REST API to announce itself, read context, send messages, request help, and maintain a heartbeat.</p></div></div>
     <h3>Python HTTP SDK</h3><p>Use Python 3.11 or newer. Git is not needed for this SDK installation. Install the SDK first in the same Python environment where you will run the setup:</p><pre>{install}</pre><button className="button secondary" onClick={() => copy(install)}><Copy size={15} />Copy SDK install</button><pre>{python}</pre><button className="button secondary" onClick={() => copy(python)}><Copy size={15} />Copy Python setup</button>

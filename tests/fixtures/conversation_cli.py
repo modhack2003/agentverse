@@ -4,10 +4,14 @@ from pathlib import Path
 import subprocess
 import sys
 
-context = json.loads(Path(sys.argv[1]).read_text().split('PROJECT CONTEXT\n', 1)[1])
+context = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8').split('PROJECT CONTEXT\n', 1)[1])
 if 'conversation_turn' in context:
     turn = context['conversation_turn']
     result = {'reply': 'Hello! I can talk with you.'}
+    if turn['message']['content'].startswith('Connection verification:'):
+        import re
+        phrase = re.search(r'AgentVerse-chat-[\w.-]+', turn['message']['content'])
+        result = {'reply': phrase.group(0) if phrase else 'Missing verification phrase'}
     if 'fail once' in turn['message']['content'] and len(sys.argv) > 2:
         marker = Path(sys.argv[2])
         if not marker.exists():
@@ -20,8 +24,8 @@ if 'conversation_turn' in context:
             result['task_request'] = {'title': 'Build feature.txt', 'description': 'Commit and independently review feature.txt.'}
 elif context['task']['kind'] == 'planning':
     result = {'summary': 'Planned the requested feature.', 'tasks': [{'title': 'Create feature.txt', 'description': 'Commit the feature.'}]}
-elif 'Review the checked-out submission' in Path(sys.argv[1]).read_text():
-    assert Path('feature.txt').read_text() == 'Conversation-driven feature\n'
+elif 'Review the checked-out submission' in Path(sys.argv[1]).read_text(encoding='utf-8'):
+    assert Path('feature.txt').read_text(encoding='utf-8') == 'Conversation-driven feature\n'
     result = {'decision': 'approve', 'comment': 'Independent reviewer verified feature.txt.'}
 else:
     Path('feature.txt').write_text('Conversation-driven feature\n')

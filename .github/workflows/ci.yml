@@ -31,7 +31,7 @@ jobs:
       - run: npm run bundle:check
         working-directory: web
       - run: uv build
-      - run: uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.1-py3-none-any.whl
+      - run: uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.2-py3-none-any.whl
       - run: uv run python tests/package_smoke.py --package https://github.com/modhack2003/agentverse/archive/${{ github.sha }}.zip
       - run: npx playwright install --with-deps chromium
         working-directory: web
@@ -57,7 +57,7 @@ jobs:
         with:
           version: "latest"
       - run: uv build
-      - run: uv run --no-project --python ${{ matrix.python }} python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.1-py3-none-any.whl
+      - run: uv run --no-project --python ${{ matrix.python }} python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.2-py3-none-any.whl
   portable:
     strategy:
       fail-fast: false
@@ -163,7 +163,7 @@ jobs:
           pattern: portable-*
           path: release-assets
           merge-multiple: true
-      - run: python packaging/manifest.py release-assets v0.4.1
+      - run: python packaging/manifest.py release-assets v0.4.2
       - name: Publish tested stable packages
         env:
           GH_TOKEN: ${{ github.token }}
@@ -171,8 +171,8 @@ jobs:
           latest=$(gh api repos/modhack2003/agentverse/git/ref/heads/main --jq '.object.sha')
           if [ "$latest" != "$GITHUB_SHA" ]; then
             echo 'A newer commit is under verification; skipping this superseded release.'
-          elif gh release view v0.4.1 >/dev/null 2>&1; then
-            echo 'Stable v0.4.1 already exists; existing release assets are preserved.'
+          elif gh release view v0.4.2 >/dev/null 2>&1; then
+            echo 'Stable v0.4.2 already exists; existing release assets are preserved.'
           else
-            gh release create v0.4.1 release-assets/* --target "$GITHUB_SHA" --title 'AgentVerse 0.4.1' --notes-file packaging/release-notes.md
+            gh release create v0.4.2 release-assets/* --target "$GITHUB_SHA" --title 'AgentVerse 0.4.2' --notes-file packaging/release-notes.md
           fi

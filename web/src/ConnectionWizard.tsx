@@ -39,8 +39,8 @@ export default function ConnectionWizard({ token, snapshot }: { token: string; s
     try {
       const current = await api<Snapshot>(token, `/projects/${snapshot.project.id}/snapshot`)
       setChecks([`Workspace authentication: passed`, `Nodes online: ${current.nodes.filter(n => n.online).length}/${current.nodes.length}`,
-        ...current.agents.map(a => `${a.name}: ${a.online ? 'heartbeat present' : 'no recent heartbeat'}; runtime ${a.runtime?.state || 'not configured'}`),
-        'Provider login, native MCP attachment and model execution: verify separately using the bounded task below.'].join('\n'))
+        ...current.agents.map(a => `${a.name}: ${a.online ? 'heartbeat present' : 'no recent heartbeat'}; runtime ${a.runtime?.state || 'not configured'}; chat ${a.conversation?.state || 'not_listening'}; ${a.conversation?.pending || 0} queued`),
+        'Use Connect → Send chat test to verify a unique owner input and its actual reply. Provider login and task execution require their own acceptance checks.'].join('\n'))
     } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   return <><button className="button secondary" onClick={() => setOpen(true)}>Connection wizard</button>
@@ -57,7 +57,7 @@ export default function ConnectionWizard({ token, snapshot }: { token: string; s
       </form>
       <label>Import or edit node configuration<textarea aria-label="Node configuration" value={config} onChange={e => setConfig(e.target.value)} rows={8} placeholder="Paste an existing configuration, or generate one above" /></label>
       <div className="dialog-actions"><button className="button secondary" disabled={busy || !config} onClick={() => void validateImported()}>Validate configuration</button><button className="button secondary" disabled={!config || config !== validated} onClick={save}>Download configuration</button></div>
-      <p>2. Save the file on the agent machine. Add a remote node here, use its invitation token, and run:</p><pre>{'agentverse doctor --config agentverse-node.json\nagentverse node --server ' + location.origin + ' --config agentverse-node.json'}</pre><p className="form-hint">Set AGENTVERSE_NODE_TOKEN on that machine. Then create a teammate and select Configure → runtime → model/settings → Launch. Connected sessions can use the teammate’s connection recipe directly.</p>
+      <p>2. Save the file on the agent machine. Add a remote node here, use its invitation token, and run:</p><pre>{'agentverse doctor --config agentverse-node.json\nagentverse node --server ' + location.origin + ' --config agentverse-node.json'}</pre><p className="form-hint">Set AGENTVERSE_NODE_TOKEN on that machine. Then create a teammate and select Configure → runtime → model/settings → Launch. Connected sessions can use Connect → Copy connection prompt, then Send chat test.</p>
       <p>3. Check the connection, then verify real work.</p><button className="button secondary" disabled={busy} onClick={() => void check()}>Check workspace connections</button>{checks && <pre role="status">{checks}</pre>}
       <p>For a bounded acceptance task, ask the agent to create a small text file containing a unique phrase, submit its branch, and have another teammate review it. Confirm the result, model choice and Stop behavior before unattended work.</p>
       {error && <p className="form-error" role="alert">{error}</p>}

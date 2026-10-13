@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import sys
 import subprocess
@@ -49,7 +50,7 @@ def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None
         prompt_file = Path(scratch) / "prompt.txt"
         prompt_file.write_text(prompt, encoding="utf-8")
         argv = [arg.replace("{model}", model).replace("{prompt_file}", str(prompt_file)).replace("{prompt}", prompt)
-                for arg in shlex.split(command)]
+                for arg in (command if isinstance(command, list) else shlex.split(command))]
         if not argv:
             raise RuntimeError("Configure a nonempty worker command.")
         env = agent_environment({**os.environ, **(extra_env or {}), "AGENTCOMMONS_PROMPT_FILE": str(prompt_file),
@@ -88,7 +89,8 @@ def execute_agent(command, prompt, directory, timeout, extra_env=None, stop=None
 
 
 class Worker:
-    def __init__(self, server, token, repo, command, base="main", push=True, interval=5, timeout=1800, model="", settings=None):
+    def __init__(self, server, token, repo, command, base="main", push=True, interval=5, timeout=1800, model="", settings=None,
+                 expected_agent=None, expected_project=None):
         self.client = Client(server, token)
         self.server, self.token = server, token
         self.repo = Path(repo).resolve()
@@ -98,14 +100,30 @@ class Worker:
         self.settings = settings or json.loads(os.getenv("AGENTVERSE_SETTINGS", os.getenv("AGENTCOMMONS_SETTINGS", "{}")))
         identity = self.client.get("/api/me")
         if identity["admin"]:
+            self.client.close()
             raise RuntimeError("Workers require a project-scoped agent token, not an admin token.")
         self.agent_id, self.project_id = identity["actor_id"], identity["project_id"]
+        if expected_agent and expected_agent != self.agent_id or expected_project and expected_project != self.project_id:
+            self.client.close()
+            raise RuntimeError('The saved agent token belongs to a different teammate or project. Use the token for this connection prompt.')
         self.prefix = f"/api/projects/{self.project_id}/tasks"
         self.stop = threading.Event()
         self.state = "idle"
         self.chat_session = uuid.uuid4().hex
         self.chat_registered = False
         self.git("rev-parse", "--git-dir")
+
+    def preflight(self):
+        """Read-only startup checks; never announce presence or register a listener."""
+        self.git('rev-parse', '--verify', self.base + '^{commit}')
+        argv = self.command if isinstance(self.command, list) else shlex.split(self.command)
+        if not argv or not shutil.which(argv[0]):
+            raise ValueError('The configured coding-tool executable is missing. Install it or use its full executable path.')
+        if self.interval < .05 or self.timeout <= 0:
+            raise ValueError('Use a positive timeout and a polling interval of at least 0.05 seconds.')
+        return {'ok': True, 'agent_id': self.agent_id, 'project_id': self.project_id,
+                'checks': ['agent authentication', 'Git repository', 'base commit', 'tool executable'],
+                'unverified': ['provider login', 'model execution', 'real chat reply', 'task completion']}
 
     def git(self, *args, cwd=None):
         result = external_run(["git", *args], cwd=cwd or self.repo, capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -119,7 +137,7 @@ class Worker:
             while not self.stop.is_set():
                 try:
                     response = http.post('/api/agents/chat/heartbeat', json={'session_id': self.chat_session, 'status': self.state}) if self.chat_registered else http.post("/api/agents/heartbeat", json={"status": self.state})
-                    if response.status_code == 401 or response.status_code == 200 and response.json().get("stop_requested"):
+                    if response.status_code in {401, 409} or response.status_code == 200 and response.json().get("stop_requested"):
                         self.stop.set()
                 except Exception:
                     pass
@@ -334,6 +352,11 @@ class Worker:
                     pass
 
     def run(self, once=False):
+        try:
+            self.preflight()
+        except BaseException:
+            self.client.close()
+            raise
         previous = {}
         if threading.current_thread() is threading.main_thread():
             def interrupted(*_):
@@ -341,13 +364,13 @@ class Worker:
             for signum in ((signal.SIGTERM, signal.SIGBREAK) if os.name == "nt" else (signal.SIGTERM,)):
                 previous[signum] = signal.signal(signum, interrupted)
         pulse = threading.Thread(target=self.pulse, daemon=True)
-        pulse.start()
-        print(f"Connected as {self.agent_id}. Waiting for teammates and tasks.", flush=True)
         try:
-            self.client.post("/api/agents/announce", {"connection": "worker", "protocol_version": 1})
             if self.settings.get('respond_to_chat', True):
                 self.client.chat_post('/api/agents/chat/register', {'session_id': self.chat_session})
                 self.chat_registered = True
+            self.client.post("/api/agents/announce", {"connection": "worker", "protocol_version": 1})
+            pulse.start()
+            print(f"Connected as {self.agent_id}. Waiting for teammates and tasks.", flush=True)
             while not self.stop.is_set():
                 snapshot = self.client.snapshot(self.project_id)
                 if snapshot["project"]["status"] == "paused":
@@ -361,6 +384,8 @@ class Worker:
                     except RuntimeError as exc:
                         if not str(exc).startswith('409:'):
                             raise
+                        if 'session is no longer current' in str(exc):
+                            raise WorkerStopped() from None
                         turn = None
                     if turn:
                         self.chat(snapshot, turn)
@@ -416,7 +441,7 @@ class Worker:
                     release = "review-release" if review else "release"
                     if not isinstance(exc, RemoteCancellationUnconfirmed):
                         try:
-                            self.client.post(f"{self.prefix}/{task['id']}/{release}", {"reason": str(exc)[:1900] or "Interrupted"})
+                            self.client.post(f"{self.prefix}/{task['id']}/{release}", {"reason": safe_error(exc, [self.token]) or "Interrupted"})
                         except Exception:
                             pass
                     raise
@@ -428,11 +453,12 @@ class Worker:
             pass
         finally:
             self.stop.set()
-            pulse.join(timeout=3)
+            if pulse.ident is not None:
+                pulse.join(timeout=3)
             try:
                 if self.chat_registered:
                     self.client.post('/api/agents/chat/stop', {'session_id': self.chat_session})
-                else:
+                elif pulse.ident is not None:
                     self.client.post("/api/agents/heartbeat", {"status": "offline"})
             except (RuntimeError, httpx.HTTPError):
                 # A revoked or unreachable session cannot send a final heartbeat.

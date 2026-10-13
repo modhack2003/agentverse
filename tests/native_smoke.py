@@ -87,6 +87,22 @@ def managed_node(executable, home, cwd, base, request):
                 time.sleep(.1)
             request(chat_path + '/stop', {})
             print('PASS: frozen node/worker invokes the configured conversation tool and publishes a verified human-visible reply.')
+            prompt_peer = request(f'/api/projects/{project}/agents', {'name': 'Portable prompt worker', 'kind': 'custom'})
+            command_file = cwd / 'agentverse command ü.json'
+            command_file.write_text(json.dumps([sys.executable, str(chat_fixture), '{prompt_file}']), encoding='utf-8-sig')
+            prompt_env = {**env, 'AGENTVERSE_AGENT_TOKEN': prompt_peer['token']}
+            prompt_args = [str(executable), '--internal-module', 'agentcommons.cli', 'worker', '--server', base,
+                           '--repo', str(repo), '--command-file', str(command_file), '--expected-agent', prompt_peer['agent']['id'],
+                           '--expected-project', project, '--no-push']
+            check = subprocess.run([*prompt_args, '--check'], env=prompt_env, cwd=cwd, capture_output=True, text=True, timeout=30)
+            assert check.returncode == 0, check.stderr
+            assert json.loads(check.stdout)['agent_id'] == prompt_peer['agent']['id']
+            request(f'/api/projects/{project}/messages', {'content': 'hi', 'recipient_id': prompt_peer['agent']['id'], 'intent': 'chat'})
+            invocation = subprocess.run([*prompt_args, '--once'], env=prompt_env, cwd=cwd, capture_output=True, text=True, timeout=30)
+            assert invocation.returncode == 0, invocation.stderr
+            snapshot = request(f'/api/projects/{project}/snapshot')
+            assert any(m['sender_id'] == prompt_peer['agent']['id'] and m['content'] == 'Hello! I can talk with you.' for m in snapshot['messages'])
+            print('PASS: frozen prompt setup checks identity and executes JSON command arguments with spaces, Unicode and a UTF-8 BOM.')
         finally:
             terminate_process(process, grace=10)
     return project
@@ -109,6 +125,7 @@ def verify(executable, package_archive=None):
             assert result.returncode == 0, result.stdout + result.stderr
             return result.stdout
         run('--help')
+        assert run('--version').strip() == 'AgentVerse 0.4.2'
         with socket.socket() as occupied:
             if os.name != 'nt':
                 occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -132,7 +149,7 @@ def verify(executable, package_archive=None):
             with opener.open(req, timeout=10) as response:
                 return json.loads(response.read())
         try:
-            assert request('/api/health')['version'] == '0.4.1'
+            assert request('/api/health')['version'] == '0.4.2'
             with opener.open(base) as response:
                 html = response.read().decode()
             assert 'AgentVerse' in html

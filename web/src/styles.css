@@ -18,3 +18,5 @@
 .chat-readiness.verified { color: var(--accent); }
 .chat-intent { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-bottom: .55rem; font-size: .75rem; }
 .chat-intent select { width: auto; max-width: 100%; }
+.connection-prompt { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.connection-prompt textarea { width: 100%; resize: vertical; font: 12px/1.5 var(--font-mono, monospace); }

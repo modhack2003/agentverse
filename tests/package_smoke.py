@@ -60,10 +60,11 @@ def verify(wheel):
         installed = subprocess.check_output([str(python), "-c",
             "import agentverse, agentcommons; print(agentverse.__version__); print(agentcommons.__file__)"],
             cwd=cwd, env=env, text=True)
-        assert installed.startswith("0.4.1\n") and str(repo) not in installed, installed
+        assert installed.startswith("0.4.2\n") and str(repo) not in installed, installed
         for alias in ("agentverse", "agentcommons"):
             executable = python.parent / (alias + (".exe" if os.name == "nt" else ""))
             subprocess.run([str(executable), "--help"], cwd=cwd, env=env, check=True, capture_output=True)
+            assert subprocess.check_output([str(executable), '--version'], cwd=cwd, env=env, text=True).strip() == 'AgentVerse 0.4.2'
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         base = f"http://127.0.0.1:{port}"
 
@@ -88,7 +89,7 @@ def verify(wheel):
                     deadline = time.monotonic() + 30
                     while True:
                         try:
-                            assert request("/api/health")["version"] == "0.4.1"
+                            assert request("/api/health")["version"] == "0.4.2"
                             break
                         except OSError:
                             assert server.poll() is None, (cwd / "server.log").read_text()

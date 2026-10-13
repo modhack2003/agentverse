@@ -80,7 +80,10 @@ class Client:
                 while not stop.is_set():
                     try:
                         heartbeat.post('/api/agents/chat/heartbeat', {'session_id': session_id, **state})
-                    except (RuntimeError, httpx.HTTPError):
+                    except RuntimeError as exc:
+                        if str(exc).startswith(('401:', '409:')):
+                            stop.set()
+                    except httpx.HTTPError:
                         pass
                     stop.wait(25)
 
@@ -92,6 +95,9 @@ class Client:
                     turn = self.chat_post('/api/agents/chat/claim', {'session_id': session_id, 'request_id': uuid.uuid4().hex})
                 except RuntimeError as exc:
                     if str(exc).startswith('409:'):
+                        if 'session is no longer current' in str(exc):
+                            stop.set()
+                            return
                         if once:
                             return
                         stop.wait(interval)

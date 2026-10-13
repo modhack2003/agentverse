@@ -4,13 +4,14 @@ import json
 import sys
 
 from dotenv import load_dotenv
-from .config import setting, agent_environment
+from .config import setting, agent_environment, VERSION
 
 
 def main():
     if os.getenv("PYTHON_DOTENV_DISABLED") != "1":
         load_dotenv()
     parser = argparse.ArgumentParser(description="AgentVerse — independent agents, connected intelligence")
+    parser.add_argument('--version', action='version', version=f'AgentVerse {VERSION}')
     sub = parser.add_subparsers(dest="action", required=True)
     serve = sub.add_parser("serve", help="Run the collaboration server and built web UI")
     serve.add_argument("--host", default="127.0.0.1")
@@ -28,7 +29,12 @@ def main():
         command.add_argument("--token", default=setting("AGENT_TOKEN") or setting("ADMIN_TOKEN"))
         if name == "worker":
             command.add_argument("--repo", required=True)
-            command.add_argument("--command", required=True, help="Agent command, with {prompt} or {prompt_file}; executed without a shell")
+            invocation = command.add_mutually_exclusive_group(required=True)
+            invocation.add_argument("--command", help="Agent command, with {prompt} or {prompt_file}; executed without a shell")
+            invocation.add_argument("--command-file", help="UTF-8 JSON argument array; preserves Windows paths, spaces and Unicode")
+            command.add_argument("--check", action="store_true", help="Read-only identity, Git/base and executable checks; does not invoke AI or start a listener")
+            command.add_argument("--expected-agent", help="Refuse a saved token belonging to another teammate")
+            command.add_argument("--expected-project", help="Refuse a saved token belonging to another project")
             command.add_argument("--base", default="main")
             command.add_argument("--no-push", action="store_true", help="Local/testing only: retain branches on this node")
             command.add_argument("--once", action="store_true")
@@ -196,8 +202,23 @@ def main():
             CommonsTUI(args.server, args.token).run()
         else:
             from .worker import Worker
-            Worker(args.server, args.token, args.repo, args.command, args.base, not args.no_push,
-                   args.interval, args.timeout, model=args.model).run(once=args.once)
+            from .worker_setup import load_command
+            from .errors import safe_error
+            import httpx
+            try:
+                command = load_command(args.command_file) if args.command_file else args.command
+                worker = Worker(args.server, args.token, args.repo, command, args.base, not args.no_push,
+                                args.interval, args.timeout, model=args.model,
+                                expected_agent=args.expected_agent, expected_project=args.expected_project)
+                if args.check:
+                    try:
+                        print(json.dumps(worker.preflight(), indent=2))
+                    finally:
+                        worker.client.close()
+                else:
+                    worker.run(once=args.once)
+            except (ValueError, OSError, RuntimeError, httpx.HTTPError) as exc:
+                parser.error(safe_error(exc, [args.token]))
 
 
 if __name__ == "__main__":

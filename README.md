@@ -45,7 +45,7 @@ py -3 -c "import urllib.request; exec(urllib.request.urlopen('https://raw.github
 
 To inspect before running, [download install.py](https://raw.githubusercontent.com/modhack2003/agentverse/main/install.py), then run `python3 install.py` or `py -3 install.py`.
 
-The installer installs stable **v0.4.1**, including the built dashboard and dependencies, into a fresh isolated environment under `~/.agentverse/versions`. It creates a persistent launcher, retains the previous version, backs up an existing workspace, and opens the same guided setup. A failed install keeps the working environment and data. Stop an existing server before updating.
+The installer installs stable **v0.4.2**, including the built dashboard and dependencies, into a fresh isolated environment under `~/.agentverse/versions`. It creates a persistent launcher, retains the previous version, backs up an existing workspace, and opens the same guided setup. A failed install keeps the working environment and data. Stop an existing server before updating.
 
 | Action | macOS / Linux installer | Windows PowerShell installer |
 |---|---|---|
@@ -62,7 +62,7 @@ python3 install.py --home /path/to/workspace --port 8001
 python3 install.py --source /path/app.whl --wheelhouse /path/dependency-wheels --no-start
 ```
 
-Portable downloads are the simplest offline installation. The wheelhouse option requires all matching dependency wheels and Python already installed. Users managing their own Python environment can install `https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.1.zip` with pip and run `agentverse launch`. The package name is `agentverse-workspace`; this does not assume a PyPI publication.
+Portable downloads are the simplest offline installation. The wheelhouse option requires all matching dependency wheels and Python already installed. Users managing their own Python environment can install `https://github.com/modhack2003/agentverse/archive/refs/tags/v0.4.2.zip` with pip and run `agentverse launch`. The package name is `agentverse-workspace`; this does not assume a PyPI publication.
 
 ## Your first project
 
@@ -70,7 +70,7 @@ Portable downloads are the simplest offline installation. The wheelhouse option 
 2. Click **Create project** beside **PROJECTS**. Give it a name and a clear goal.
 3. Add work in **Task board**. Describe the expected result and any dependencies or required capabilities.
 4. Open **Agents & connections**, create a teammate, and select a connection mode from the table below. Save its connection token when shown.
-5. Follow that mode's setup guide. Confirm the teammate appears online before assigning work; managed teammates also need runtime configuration and **Launch**.
+5. Copy the connection prompt into your AI agent and follow that mode's setup guide. Start the real listener and use **Send chat test** to verify its reply; managed teammates also need runtime configuration and **Launch**.
 6. Use conversations, shared memory, and help requests to coordinate. Work submitted for review needs a separate reviewer; connect at least two active teammates for unattended implementation and peer review.
 
 ### Talk to the team and give work in chat
@@ -92,6 +92,14 @@ Creating a teammate record does **not** start a coding tool. Adding an MCP endpo
 | **Connected session** | An editor, application, or your own agent loop | Its MCP/HTTP connection and teammate token; the client controls its own model and startup | [Client recipes and SDK](docs/agents.md) |
 | **Managed CLI** | A headless coding command running on a node | An authenticated tool, repository, node profile, and a command that follows the worker contract | [Nodes, launch, and recovery](docs/remote-control.md) |
 | **Managed API** | A coding service exposed through an API bridge | A node profile and an AgentVerse jobs-protocol bridge with acknowledged cancellation | [API adapter contract](docs/adapters.md) |
+
+### Copy a connection prompt and verify a reply
+
+Create a teammate, or open **Agents & connections → Connect** for an existing one. Choose **Automatic HTTP worker** or **Native MCP**, the agent machine's operating system, and the workspace URL that machine can reach. A localhost URL only reaches that machine itself. Copy the generated prompt into your own AI agent. Tokens are excluded by default; use the saved `AGENTVERSE_AGENT_TOKEN` or explicitly include the new teammate's private token. A saved token does not need to be replaced to copy setup instructions.
+
+The prompt guides the agent to verify its installed tool, provider login, repository and real invocation, then keep a persistent worker or native loop running. It cannot make an idle editor run unattended when the editor has no supported runtime. Select **Send chat test** after starting the listener: the dashboard sends a unique owner DM and checks that this teammate replies with the matching phrase. Failed or unconfirmed replies remain visible in Team conversation for recovery. The check verifies the round trip; provider identity, model quality and coding/review ability need their own acceptance tests.
+
+Worker commands can now be saved as a UTF-8 JSON array in `agentverse-command.json`. Use `agentverse worker --server WORKSPACE_URL --repo LOCAL_CLONE --command-file agentverse-command.json --expected-agent AGENT_ID --expected-project PROJECT_ID --check` for read-only startup checks, then omit `--check` to keep the worker running. The JSON file contains executable arguments, never credentials, and preserves paths with spaces and Unicode. See [the full guide](docs/agents.md#generated-connection-prompts).
 
 For an editor/app, use the server's `/mcp/` endpoint with `Authorization: Bearer YOUR_AGENT_TOKEN`. On the same computer this is `http://127.0.0.1:8000/mcp/`. Call `announce_peer`, discover `list_teammates`, and maintain heartbeats as described in the [peer loop](docs/agents.md). Each active session needs its own teammate identity.
 
@@ -257,7 +265,7 @@ Open http://localhost:5173; Vite proxies API/MCP requests to the server on port 
 uv run ruff check src tests install.py packaging
 uv run pytest -q
 uv build
-uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.1-py3-none-any.whl
+uv run python tests/package_smoke.py --wheel dist/agentverse_workspace-0.4.2-py3-none-any.whl
 # In web/:
 npm run build
 npm run bundle:check
