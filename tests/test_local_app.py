@@ -1,6 +1,7 @@
 """Onboarding, consistent backups, safe restore and managed process cleanup."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -152,6 +153,27 @@ def test_installer_source_and_package_copy_match():
     assert (root / 'install.py').read_bytes() == (root / 'src/agentcommons/installer.py').read_bytes()
     from agentcommons.installer import SOURCE
     assert '/refs/tags/' in SOURCE
+
+
+@pytest.mark.skipif(os.name == 'nt', reason='Darwin/POSIX process-group behavior')
+@pytest.mark.parametrize('state', ['zombie', 'live', 'unknown'])
+def test_macos_group_permission_error_requires_positive_death_evidence(monkeypatch, state):
+    from agentcommons import processes
+    process = start_process([sys.executable, '-c', 'pass'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process.wait(timeout=10)
+    monkeypatch.setattr(processes.sys, 'platform', 'darwin')
+
+    def denied(*_):
+        raise PermissionError('Simulated Darwin group signal rejection')
+
+    monkeypatch.setattr(processes.os, 'killpg', denied)
+    output = f'{process.pid} {process.pid} ' + ('Z' if state == 'zombie' else 'S') + '\n'
+    monkeypatch.setattr(processes, 'external_run', lambda *_, **kwargs: subprocess.CompletedProcess([], 1 if state == 'unknown' else 0, output, ''))
+    if state == 'zombie':
+        terminate_process(process, grace=.1)
+    else:
+        with pytest.raises(PermissionError):
+            terminate_process(process, grace=.1)
 
 
 def test_diagnostic_export_contains_no_environment_secrets(tmp_path, monkeypatch):

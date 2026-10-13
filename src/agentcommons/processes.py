@@ -91,6 +91,9 @@ def terminate_process(process, grace=5):
         os.killpg(process.pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        if not dead_macos_group(process):
+            raise
     try:
         if process.poll() is None:
             process.wait(timeout=grace)
@@ -102,4 +105,31 @@ def terminate_process(process, grace=5):
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        except PermissionError:
+            if not dead_macos_group(process):
+                raise
         process.wait(timeout=5)
+
+
+def dead_macos_group(process):
+    """Darwin killpg can return EPERM for a group containing only zombies.
+
+    Check both the reaped leader and all group members; never interpret a
+    denied signal to live processes (or an unreadable inventory) as success.
+    See apple-oss-distributions/xnu/bsd/kern/kern_sig.c, killpg1's SZOMB filter.
+    """
+    if sys.platform != 'darwin' or process.poll() is None:
+        return False
+    try:
+        result = external_run(['/bin/ps', '-axo', 'pid=,pgid=,stat='], capture_output=True,
+                              text=True, encoding='utf-8', errors='strict', timeout=5)
+        if result.returncode or not result.stdout.strip():
+            return False
+        for line in result.stdout.splitlines():
+            pid, group, state = line.split()
+            int(pid)
+            if int(group) == process.pid and not state.startswith('Z'):
+                return False
+        return True
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return False

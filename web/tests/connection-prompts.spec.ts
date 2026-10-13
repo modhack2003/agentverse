@@ -46,7 +46,9 @@ test('generated prompts preserve identity, opt into credentials, choose reachabl
   expect(text).not.toContain(agentToken)
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
   await dialog.getByRole('button', { name: 'Copy connection prompt', exact: true }).click()
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(text)
+  const copied = await page.evaluate(() => navigator.clipboard.readText())
+  // Windows clipboard APIs expose native CRLF line endings; textareas use LF.
+  expect(copied.replace(/\r\n?/g, '\n')).toBe(text)
   await dialog.getByLabel('Workspace URL reachable').fill('https://username:password@workspace.example.test/private')
   await expect(dialog.getByRole('button', { name: 'Copy connection prompt', exact: true })).toBeDisabled()
   await dialog.getByLabel('Workspace URL reachable').fill('https://workspace.example.test')
