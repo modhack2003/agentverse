@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, rmSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { validateModulePaths } from './module-paths.mjs'
+
+validateModulePaths(fileURLToPath(new URL('../src/', import.meta.url)))
 
 const output = fileURLToPath(new URL('../dist/', import.meta.url))
 function removeFiles(directory) {

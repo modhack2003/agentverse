@@ -26,6 +26,8 @@ jobs:
           cache-dependency-path: web/package-lock.json
       - run: npm ci
         working-directory: web
+      - run: node --test scripts/module-paths.test.mjs
+        working-directory: web
       - run: npm run build
         working-directory: web
       - run: npm run bundle:check
@@ -75,6 +77,8 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
+        working-directory: web
+      - run: node --test scripts/module-paths.test.mjs
         working-directory: web
       - run: npm run build
         working-directory: web

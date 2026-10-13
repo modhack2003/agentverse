@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Copy } from 'lucide-react'
 import { api } from './api'
-import { connectionPrompt } from './connectionPrompt'
-import type { AgentOS, PromptMode } from './connectionPrompt'
+import { connectionPrompt } from './agentConnectionRecipe'
+import type { AgentOS, PromptMode } from './agentConnectionRecipe'
 import type { Agent, Message, Project } from './types'
 
 export default function ConnectionPrompt({ agent, project, agentToken, workspaceToken, copy }: { agent: Agent; project: Project; agentToken: string; workspaceToken: string; copy: (text: string) => void }) {

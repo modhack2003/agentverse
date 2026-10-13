@@ -41,8 +41,10 @@ def test_terminal_refresh_bridges_a_multi_page_gap(live_server, target, initial_
         app = CommonsTUI(url, TOKEN)
         async with app.run_test(size=(140, 50)) as pilot:
             await pilot.pause(1)
+            await wait_for_updates(app)
             app.query_one("#chat-target", Select).value = a if target == "private" else "#" + target
-            await pilot.pause(0.5)
+            await pilot.pause(0.1)
+            await wait_for_updates(app)
             assert len(app.chat_messages) == min(initial_count, 100)
             for i in range(205):
                 post(f"Inside gap {i}")
